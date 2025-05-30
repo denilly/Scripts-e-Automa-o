@@ -1,0 +1,1854 @@
+#!/bin/bash
+# -----------------------------------------------------------------------------
+# Nome do arquivo de script: script-backup-mysql.sh
+# Descrição: Script para realizar o backup/dump do banco de dados Mysql/Mariadb, 
+#            compactação e exclusão de backups antigos.
+# Autor: Denilly Carvalho do Carmo
+# Data de Criação: 15/05/2025
+# Copyright (c) 2025 Denilly Carvalho do Carmo. Todos os direitos reservados.
+# Licença: GNU General Public License (GPL)
+# Versão: 1.6
+
+# NOTAS: Este script é fornecido "como está" e pode ser utilizado e modificado por terceiros,
+#        desde que os créditos ao autor sejam mantidos. Para uso em projetos, por favor, faça
+#        referência a este script e ao autor.
+#
+# IMPORTANTE: Execute este script com ou sem argumentos para realizar o backup/dump do banco
+#             de dados dentre outras funções. Caso não seja informado nenhum argumento, será 
+#             aberto um menu interativo.
+#             Utilize argumentos para execução do script diretamente via comando ou agendamento
+#             no Cron. Acesse a opção de ajuda "-h/--help" do script para maiores informações.
+#             Os logs gerados pelo script podem ser rotacionados pelo logrotate 
+#             (/etc/logrotate.d/script-backup-mysql).
+#
+# COMO USAR:
+# 1. Crie o arquivo do script com o seu editor linux preferido:
+#    $ nano /usr/local/sbin/script-backup-mysql.sh
+# 2. Cole o código deste arquivo no editor, ajustes os parâmetros comentados com "<--" (quando  
+#    necessário) e salve o arquivo.
+# 3. Dê permissão de execução ao script:
+#    $ chmod 700 script-backup-mysql.sh
+# 4. Execute o script com "-l/--log" e "-C/--check" para criar o arquivo de log e checar requisitos:
+#    $ sudo script-backup-mysql.sh -l -C
+# 5. Mantenha uma cópia do script em /backup/scripts
+# 6. Crie um arquivo de configuração do logrotate com o seu editor linux preferido
+#    $ nano /etc/logrotate.d/script-backup-mysql
+# 7. Cole o código exemplo abaixo (a partir de "/var..." até "}") retire o sinalizador de 
+#    comentário "#    " para rotacionar o log.
+#
+#    /var/log/script-backup-mysql.sh.log {
+#        su root adm
+#        daily
+#        rotate 10
+#        compress
+#        missingok
+#        notifempty
+#        delaycompress
+#        create 640 root adm
+#    }
+# -----------------------------------------------------------------------------
+
+#  1. =============================== CONFIGURAÇÕES ===============================
+# Controle de versão
+REVISAO_SCRIPT="30/05/2025"
+VERSAO_SCRIPT="1.6"
+
+# Parâmetros
+SGBD_USERNAME="login_usuario"    # <-- Informe o usuário com acesso aos Banco de Dados
+SGBD_USER_PWD="senha_usuario"    # <-- Senha do usuário (Se a conta não existir, será criada uma com esta senha)
+SGBD_HOST="127.0.0.1"     # <-- Informe o host do banco de dados (localhost ou IP)
+SGBD_PORT="3306"          # <-- Informe a porta do banco de dados (padrão: 3306)
+SGBD_CONN_TIMEOUT="5"    # Timeout em segundos para conexão com o Banco de Dados
+SGBD_PARAM="--single-transaction --quick --routines --events --triggers"    # Parâmetros padrão para o msqldump
+SGBD_MY_CNF_TEMP="/tmp/.my.cnf.tmp.$$"    # Arquivo temporário de configuração segura de login Mysql/Mariadb
+
+DEFAULT_DESTINO="/backup/banco_dados"    # <-- Diretório padrão de destino do backup
+DEFAULT_COMPACTAR="nao"    # Compactação
+DEFAULT_VERIFICAR="sim"    # Verificação de integridade
+DEFAULT_RETENTION_DAYS="10"    # Dias de retenção do backup
+
+# Log
+LOGDIR="/var/log"    # <-- Caminho para o log do sistema ou outro se preferir
+LOGFILE="$LOGDIR/$(basename "$0").log"    # Nome do arquivo de log
+LOG_DEBUG="nao"   # Log desabilitado por padrão
+
+# Definindo cores e estilos ANSI para formatacao de saída no terminal (modificar conforme necessário)
+# Modelos e estilos de formatação baseados no script audit.sh de Evandro S. Nascimento
+COR_TITULO="\033[32;1m"          # Verde
+COR_TITULO2="\033[35;1m"         # Magenta
+COR_SUBTITULO1="\033[31;1m"      # Vermelho
+COR_SUBTITULO2="\033[33;1m"      # Amarelo
+COR_SUBTITULO3="\033[36;1m"      # Azul claro
+COR_SUBTITULO4="\033[35;1m"      # Magenta
+COR_TEXTO1="\033[31;1m"          # Vermelho
+COR_TEXTO2="\033[33;1m"          # Amarelo
+COR_TEXTO3="\033[35;1m"          # Magenta
+COR_TEXTO4="\033[36;1m"          # Azul claro
+COR_TEXTO5="\033[32;1m"          # Verde
+COR_SUBLINHADO="\033[4;1m"       # Sublinhado
+COR_DESTAQUE1="\033[100;1m"      # Fundo cinza
+COR_DESTAQUE2="\033[101;1m"      # Fundo vermelho
+COR_DESTAQUE3="\033[104;1m"      # Fundo azul
+COR_RESET="\033[m"               # Reseta a formatacao
+RODAPE_SIZE="100"                # Comprimento do rodapé
+# =================================================================================
+
+#  2. ================================== FUNÇÕES ==================================
+# Cabeçalhos personalizados com formatação ANSI para saída sd 3 (>&3) no terminal e saída para arquivo de log de forma independente
+titulo() {    # Título ou cabeçalho
+  local msg="$1"
+  local raw="${2:-$(echo -e "$msg" | sed 's/\x1B\[[0-9;]*m//g')}"  # Remove ANSI se não passar raw
+  
+  # Terminal (com cor)
+  printf "%b" "$msg" >&3
+  # Log (sem cor)
+  [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s" "$raw" >> "$LOGFILE"
+  # Pula 1 linha
+  printf "%s\n"
+}
+
+rodape() {    # Rodapé de nível
+  local msg="$1"
+  local cor="$2"
+  local raw="$msg"
+
+  if [[ "$msg" =~ ^[0-9]+$ ]]; then
+    msg="$(printf "$cor%*s$COR_RESET" "$msg" '')"
+    raw="$(printf '%*s' "$raw" '')"
+  fi
+
+  # Terminal (com cor)
+  printf "%s\n" "$msg" >&3  #Fundo Azul
+  # Log (sem cor)
+  #printf "%s\n" "$raw" >> "$LOGFILE"
+  # Pula 1 linha
+  printf "\n"
+}
+
+texto() {    # Texto formatado em ANSI
+  local msg="$1"
+  local raw="${2:-$(echo -e "$msg" | sed 's/\x1B\[[0-9;]*m//g')}"  # Remove ANSI se não passar raw
+  
+  # Terminal (com cor)
+  printf "%b" "$msg" >&3
+  # Log (sem cor)
+  [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] &&  printf "%s" "$raw" >> "$LOGFILE"
+  # Pula 1 linha
+  printf "%s\n"
+}
+
+tabela() {    # Formata cabeçalho de tabela em ANSI
+  local formato="$1"
+  shift
+  local cabecalho
+  cabecalho=$(printf "$formato" "$@")
+  
+  # Remove ANSI para log
+  local raw_cabecalho
+  raw_cabecalho="$(echo -e "$cabecalho" | sed 's/\x1B\[[0-9;]*m//g')"
+
+  printf "%b\n" "$cabecalho" >&3
+  [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$raw_cabecalho" >> "$LOGFILE"
+}
+
+# Logs personalizados com formatação ANSI para saída no terminal tty e saída para arquivo de log
+log_info() {
+  local timestamp
+  timestamp=$(date "+%d/%b/%Y:%H:%M:%S %z")
+  local msg="$1"
+  local raw="${2:-$(echo -e "$msg" | sed 's/\x1B\[[0-9;]*m//g')}"  # Remove ANSI se não passar raw
+
+  # Terminal (com cor)
+  printf "%b" "$COR_TEXTO4[INFO]$COR_RESET [$timestamp] $msg" >&3  # Ciano
+  # Log (sem cor)
+  [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s" "[INFO] [$timestamp] $raw" >> "$LOGFILE"
+  # Pula 1 linha
+  printf "%s\n"
+}
+
+log_success() {
+  local timestamp
+  timestamp=$(date "+%d/%b/%Y:%H:%M:%S %z")
+  local msg="$1"
+  local raw="${2:-$(echo -e "$msg" | sed 's/\x1B\[[0-9;]*m//g')}"  # Remove ANSI se não passar raw
+  
+  # Terminal (com cor)
+  printf "%b" "$COR_TEXTO5[OK]$COR_RESET [$timestamp] $msg" >&3  # Ciano
+  # Log (sem cor)
+  [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s" "[OK] [$timestamp] $raw" >> "$LOGFILE"
+  # Pula 1 linha
+  printf "%s\n"
+}
+
+log_warn() {
+  local timestamp
+  timestamp=$(date "+%d/%b/%Y:%H:%M:%S %z")
+  local msg="$1"
+  local raw="${2:-$(echo -e "$msg" | sed 's/\x1B\[[0-9;]*m//g')}"  # Remove ANSI se não passar raw
+  
+  # Terminal (com cor)
+  printf "%b" "$COR_TEXTO2[AVISO]$COR_RESET [$timestamp] $msg" >&3  # Ciano
+  # Log (sem cor)
+  [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s" "[AVISO] [$timestamp] $raw" >> "$LOGFILE"
+  # Pula 1 linha
+  printf "%s\n"
+}
+
+log_error() {
+  local timestamp
+  timestamp=$(date "+%d/%b/%Y:%H:%M:%S %z")
+  local msg="$1"
+  local raw="${2:-$(echo -e "$msg" | sed 's/\x1B\[[0-9;]*m//g')}"  # Remove ANSI se não passar raw
+
+  # Terminal (com cor)
+  printf "%b" "$COR_TEXTO1[ERRO]$COR_RESET [$timestamp] $msg" >&3  # Ciano
+  # Log (sem cor)
+  [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s" "[ERRO] [$timestamp] $raw" >> "$LOGFILE"
+  # Pula 1 linha
+  printf "%s\n"
+}
+
+# Testa se diretório de destino informado existe
+validar_diretorio() {
+  local dir
+  dir="$(echo "$1" | xargs)"  # Remove espaços extras
+
+  if [ -d "$dir" ]; then
+    if [ ! -w "$dir" ]; then
+      log_error "Sem permissão de gravação no diretório: $COR_DESTAQUE2$dir$COR_RESET"
+      printf "\n%s\n" "Abortando."
+      return 1
+    fi
+    return 0
+  elif [[ -f "$dir" && "$dir" =~ \.tar\.bz2$ ]]; then
+    if [ ! -r "$dir" ]; then
+      log_error "Sem permissão de leitura no arquivo: $COR_DESTAQUE2$dir$COR_RESET"
+      printf "\n%s\n" "Abortando."
+      return 1
+    fi
+    return 0
+  else
+    log_error "O caminho completo informado não existe: $COR_DESTAQUE2$dir$COR_RESET"
+    printf "\n%s\n" "Abortando."
+    return 1
+  fi
+}
+
+# Testa conexão com o MySQL
+testar_conexao_mysql() {
+  log_info "Testando conexão com o MySQL em $COR_DESTAQUE1$SGBD_HOST:$SGBD_PORT$COR_RESET com o usuário '$SGBD_USERNAME'..."
+
+  if ! executar_mysql "$SGBD_USERNAME" "$SGBD_USER_PWD" --connect-timeout=$SGBD_CONN_TIMEOUT -e "SELECT 1;" &>/dev/null; then
+    log_error "Falha na conexão com o MySQL em $COR_DESTAQUE2$SGBD_HOST:$SGBD_PORT$COR_RESET usando o usuário '$SGBD_USERNAME'."
+    printf "\n%s\n" "Abortando."
+    return 1
+  fi
+
+  log_success "Conexão com o MySQL em $COR_DESTAQUE1$SGBD_HOST:$SGBD_PORT$COR_RESET estabelecida com sucesso."
+  return 0
+}
+
+# Testa se tar e bzip2 estão instalados
+testar_depend_compactacao() {
+  local dependencias=("tar" "bzip2")
+  local faltando=0
+
+  for cmd in "${dependencias[@]}"; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+      log_error "Dependência '$cmd' não encontrada. Instale com o gerenciador de pacotes correspondente ao seu S.O."
+      faltando=1
+    fi
+  done
+
+  return $faltando
+}
+
+# Gera checksum para os dumps
+gerar_checksum() {
+  local arquivo="$1"
+
+  if [ -f "$arquivo" ]; then
+    if (cd "$(dirname "$arquivo")" && sha256sum "$(basename "$arquivo")" > "$(basename "$arquivo").sha256"); then
+      log_success "Checksum SHA256 gerado para: ${COR_DESTAQUE1}$(basename "$arquivo")${COR_RESET}"
+    else
+      log_error "Falha ao gerar checksum para: ${COR_DESTAQUE1}$(basename "$arquivo")${COR_RESET}"
+      return 1
+    fi
+  else
+    log_error "Arquivo não encontrado para gerar checksum: ${COR_DESTAQUE1}$arquivo${COR_RESET}"
+    return 1
+  fi
+}
+
+# Valida integridade dos dumps usando o checksum
+validar_checksum() {
+  local dump_file="$1"
+  local checksum_file="${dump_file}.sha256"
+
+  log_info "Validando checksum para: $COR_DESTAQUE1$dump_file$COR_RESET"
+
+  if [[ ! -f "$checksum_file" ]]; then
+    log_warn "Arquivo de checksum ${COR_SUBLINHADO}não encontrado${COR_RESET} para: ${COR_DESTAQUE1}$dump_file${COR_RESET}"
+    return 0
+  fi
+
+  if (cd "$(dirname "$checksum_file")" && sha256sum -c "$(basename "$checksum_file")" --quiet); then
+    log_success "Checksum ${COR_SUBLINHADO}válido${COR_RESET} para: $(basename "$dump_file")"
+    return 0
+  else
+    log_error "Falha na validação do checksum de: $(basename "$dump_file")"
+    return 1
+  fi
+}
+
+processar_dump() {
+  local dump_file="$1"
+
+  log_info "Verificando dump: $COR_DESTAQUE1$dump_file$COR_RESET"
+
+  if [[ ! -s "$dump_file" ]]; then
+    log_error "Arquivo $dump_file está vazio!"
+    return
+  fi
+
+  if tail -n 1 "$dump_file" | grep -q "Dump completed on"; then
+    log_success "Linha final típica encontrada no dump: 'Dump completed on ...'"
+  else
+    log_warn "Linha final típica ${COR_DESTAQUE1}NÃO${COR_RESET} encontrada no dump: 'Dump completed on ...'"
+  fi
+
+  local dump_base
+  dump_base=$(basename "$dump_file" .sql)
+
+  local db_name
+  local table_name=""
+
+  # Se tiver separador "_", assumimos que é dump de tabela no formato banco_tabela.sql
+  if [[ "$dump_base" == *"."* ]]; then
+    db_name="${dump_base%%.*}"
+    table_name="${dump_base#*.}"
+  else
+    db_name="$dump_base"
+  fi
+
+  if ! executar_mysql "$SGBD_USERNAME" "$SGBD_USER_PWD" -e "USE \`$db_name\`;" 2>/dev/null; then
+    log_error "Banco de dados '${COR_DESTAQUE1}$db_name${COR_RESET}' não existe no servidor. Não foi possível validar as tabelas."
+    return
+  fi
+
+  if [[ -n "$table_name" ]]; then
+    # Verificação de dump de tabela específica
+    log_info "Verificando se a tabela '${COR_DESTAQUE1}$table_name${COR_RESET}' existe no banco '${COR_DESTAQUE1}$db_name${COR_RESET}'..."
+
+    if executar_mysql "$SGBD_USERNAME" "$SGBD_USER_PWD" -e "SHOW TABLES FROM \`$db_name\` LIKE '$table_name';" -s --skip-column-names | grep -q "$table_name"; then
+      log_success "Tabela '${COR_DESTAQUE1}$table_name${COR_RESET}' existe no banco de dados."
+    else
+      log_error "Tabela '${COR_DESTAQUE1}$table_name${COR_RESET}' não encontrada no banco de dados."
+      return
+    fi
+
+    # Verifica se há CREATE TABLE no dump
+    local create_table_count
+    create_table_count=$(grep -c '^CREATE TABLE' "$dump_file")
+
+    if [[ "$create_table_count" -ge 1 ]]; then
+      log_success "Dump contém definição de tabela (${create_table_count} CREATE TABLE encontrado)."
+    else
+      log_warn "Dump ${COR_SUBLINHADO}não${COR_RESET} contém definição de tabela para '$table_name'."
+    fi
+
+  else
+    # Verificação de dump de banco de dados completo
+    local tabelas_reais
+    tabelas_reais=$(executar_mysql "$SGBD_USERNAME" "$SGBD_USER_PWD" -e "SHOW TABLES FROM \`$db_name\`;" -s --skip-column-names | wc -l)
+
+    local tabelas_dump
+    tabelas_dump=$(grep -c '^CREATE TABLE' "$dump_file")
+
+    log_info "Tabelas no banco: $tabelas_reais"
+    log_info "Tabelas no dump: $tabelas_dump"
+
+    if [[ "$tabelas_reais" -eq "$tabelas_dump" ]]; then
+      log_success "Todas as tabelas foram exportadas corretamente."
+    else
+      log_warn "Algumas tabelas ${COR_SUBLINHADO}não${COR_RESET} foram exportadas!"
+    fi
+  fi
+}
+
+# Método para criar login no Mysql usando arquivo .my.cnf temporário (mais seguro)
+criar_mycnf() {
+  local user="$1"
+  local pwd="$2"
+
+  mkdir -p "$(dirname "$SGBD_MY_CNF_TEMP")"
+
+  cat > "$SGBD_MY_CNF_TEMP" <<EOF
+[client]
+user=${user}
+password=${pwd}
+EOF
+
+  chmod 600 "$SGBD_MY_CNF_TEMP"
+  #log_success "Arquivo $SGBD_MY_CNF_TEMP criado com sucesso e protegido com chmod 600."
+}
+
+# Remove arquivo .my.cnf temporário com login e senha usado para login do Mysql/Mariadb
+remover_mycnf() {
+  if [[ -f "$SGBD_MY_CNF_TEMP" ]]; then
+    rm -f "$SGBD_MY_CNF_TEMP"
+    #log_success "Arquivo $SGBD_MY_CNF_TEMP removido com sucesso."
+  #else
+    #log_success "Nenhum arquivo $SGBD_MY_CNF_TEMP ou backup encontrado. Nada a fazer."
+  fi
+}
+
+# Função wrapper para chamada do Mysql/Mariadb
+executar_mysql() {
+  criar_mycnf "$1" "$2"
+  shift 2
+  mysql --defaults-file="$SGBD_MY_CNF_TEMP" -h "$SGBD_HOST" -P "$SGBD_PORT" "$@"
+  local status=$?
+  remover_mycnf
+  return $status
+}
+
+# Função wrapper para chamada do mysqldump
+executar_mysqldump() {
+  criar_mycnf "$1" "$2"
+  shift 2
+  mysqldump --defaults-file="$SGBD_MY_CNF_TEMP" -h "$SGBD_HOST" -P "$SGBD_PORT" "$@"
+  local status=$?
+  remover_mycnf
+  return $status
+}
+
+# Função wrapper para chamada do mysqladmin
+executar_mysqladmin() {
+  criar_mycnf "$1" "$2"
+  shift 2
+  mysqladmin --defaults-file="$SGBD_MY_CNF_TEMP" -h "$SGBD_HOST" -P "$SGBD_PORT" "$@"
+  local status=$?
+  remover_mycnf
+  return $status
+}
+
+# Excluir backups antigos
+excluir_backups_antigos() {
+  local destino="$1"
+  local dias="$2"
+  local excluiu_algo=0
+
+  titulo "=> ${COR_SUBLINHADO}Executando opção de exclusão de backups${COR_RESET}"
+
+  if ! validar_diretorio "$destino"; then
+    return 1
+  fi
+
+  dias=${dias:-$DEFAULT_RETENTION_DAYS}
+  log_info "Verificando backups para excluir com mais de $COR_SUBLINHADO$dias$COR_RESET dias em: $COR_DESTAQUE1$destino$COR_RESET"
+
+  # Remover arquivos .tar.bz2 antigos
+  ja_informou_arq=0
+  while IFS= read -r arquivo; do
+    if [[ -n "$arquivo" ]]; then
+      if [[ "$ja_informou_arq" -eq 0 ]]; then
+        log_info "Arquivo(s) compactado(s) '.tar.bz2' detectado(s) para exclusão..."
+        ja_informou_arq=1
+      fi
+      log_info "Excluindo: $COR_DESTAQUE1$arquivo$COR_RESET"
+      rm -f "$arquivo"
+      excluiu_algo=1
+    fi
+  done < <(find "$destino" -maxdepth 1 -type f -name "????-??-??_??????.tar.bz2" -mtime +"$dias")
+
+  # Procurar diretórios no padrão de data/hora
+  ja_informou_dir=0
+  while IFS= read -r dir; do
+    if [[ -n "$dir" && "$dir" =~ .*/[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{6}$ ]]; then
+      arquivos_sql=($(find "$dir" -maxdepth 1 -type f -name "*.sql"))
+      arquivos_sha=($(find "$dir" -maxdepth 1 -type f -name "*.sha256"))
+      outros_arquivos=($(find "$dir" -maxdepth 1 -type f ! -name "*.sql" ! -name "*.sha256"))
+
+      total_backups=$(( ${#arquivos_sql[@]} + ${#arquivos_sha[@]} ))
+
+      if [[ "$total_backups" -gt 0 ]]; then
+        if [[ "$ja_informou_dir" -eq 0 ]]; then
+          log_info "Diretório(s) com arquivo(s) '.sql' ou '.sha256' detectado(s) para exclusão..."
+          ja_informou_dir=1
+        fi
+        if [[ ${#outros_arquivos[@]} -eq 0 ]]; then
+          log_info "Excluindo diretório completo: $COR_DESTAQUE1$dir$COR_RESET"
+          rm -rf "$dir"
+          excluiu_algo=1
+        else
+          log_warn "Diretório '$dir' contém outros arquivos além de '.sql' e '.sha256'. Excluindo apenas esses..."
+          for f in "${arquivos_sql[@]}" "${arquivos_sha[@]}"; do
+            log_info "Excluindo: $COR_DESTAQUE1$f$COR_RESET"
+            rm -f "$f"
+            excluiu_algo=1
+          done
+        fi
+      else
+        log_warn "Diretório '$dir' não contém arquivos '.sql' ou '.sha256'. Nenhuma ação."
+      fi
+    fi
+  done < <(find "$destino" -maxdepth 1 -type d -name "????-??-??_??????" -mtime +"$dias")
+
+  if [[ $excluiu_algo -eq 1 ]]; then
+    log_success "Exclusão concluída."
+  else
+    log_info "Nenhum backup antigo encontrado para exclusão."
+  fi
+
+  titulo "=> ${COR_SUBLINHADO}Execução da opção de exclusão de backups terminada${COR_RESET}"
+}
+
+# Efetua o backup
+executar_backup() {
+  local tipo="$1"
+  local destino="$2"
+  local compactar="$3"
+  local database="$4"
+  local verificar="$5"
+  local data_atual
+  data_atual=$(date +"%Y-%m-%d_%H%M%S")
+
+  titulo "=> ${COR_SUBLINHADO}Executando opção de backup de banco de dados${COR_RESET}"
+
+  # Validação do diretório
+  if ! validar_diretorio "$destino"; then
+    return 1
+  fi
+  log_success "Diretório de destino definido: $COR_DESTAQUE1$destino$COR_RESET"
+
+  # Teste de conexão Mysql
+  if ! testar_conexao_mysql; then
+    return 1
+  fi
+
+  mkdir -p "$destino/$data_atual"
+
+  local bancos=""
+
+  if [ "$tipo" -eq 1 ]; then
+    log_info "Realizando backup de ${COR_SUBLINHADO}todos${COR_RESET} os bancos de dados..."
+    bancos=$(executar_mysql "$SGBD_USERNAME" "$SGBD_USER_PWD" -e "SHOW DATABASES;" | grep -Ev "^(Database|information_schema|performance_schema|mysql|sys)$")
+  else
+    if ! executar_mysql "$SGBD_USERNAME" "$SGBD_USER_PWD" -e "USE $database;" 2>/dev/null; then
+      log_error "Banco de dados '$database' não encontrado."
+      printf "\n%s\n" "Abortando."
+      rm -rf "$destino/$data_atual"
+      return 1
+    fi
+    bancos="$database"
+  fi
+
+  local sucesso=1
+
+  for banco in $bancos; do
+    log_info "Realizando backup do banco: $COR_DESTAQUE1$banco$COR_RESET"
+    if ! executar_mysqldump "$SGBD_USERNAME" "$SGBD_USER_PWD" $SGBD_PARAM --databases "$banco" > "$destino/$data_atual/$banco.sql"; then
+      log_error "Erro ao fazer backup do banco: $COR_DESTAQUE2$banco$COR_RESET"
+      sucesso=0
+    fi
+    # Gera checksum SHA256 do dump
+    local dump_file="$destino/$data_atual/$banco.sql"
+    if [ -f "$dump_file" ]; then
+      gerar_checksum "$dump_file" || log_warn "Não foi possível gerar o checksum para: $COR_DESTAQUE2$dump_file$COR_RESET"
+    fi
+  done
+
+  local backup_final=""
+
+  # Se o Dump teve sucesso, verifica se a compactação foi informada
+  if [ "$sucesso" -eq 1 ]; then
+    if [[ "$compactar" =~ ^(s|sim)$ ]]; then  # Realiza a compactação se especificada
+      if testar_depend_compactacao; then  # Testa dependências para compactação tar e bzip2
+        log_info "Compactando backup em tar.bz2..."
+        if tar -cjf "$destino/$data_atual.tar.bz2" -C "$destino" --remove-files "$data_atual"; then  # inicia a compactação
+          log_success "Backup concluído e armazenado em: $COR_DESTAQUE1$destino/$data_atual.tar.bz2$COR_RESET"
+          backup_final="$data_atual.tar.bz2"
+        else
+          log_error "Erro ao compactar o backup. O backup foi realizado, mas não foi compactado."
+          log_warn "Backup armazenado em: $COR_DESTAQUE1$destino/$data_atual$COR_RESET"
+          backup_final="$data_atual"
+        fi
+      else
+        log_error "Compactação não realizada por falta de dependências."
+        log_warn "Backup armazenado em: $COR_DESTAQUE1$destino/$data_atual$COR_RESET"
+        backup_final="$data_atual"
+      fi
+    else  # Caso a compactação não tenha sido informada
+      log_success "Backup concluído em: $COR_DESTAQUE1$destino/$data_atual$COR_RESET"
+      backup_final="$data_atual"
+    fi
+  else  # Caso 1 ou mais Dumps tenham falhado
+    log_error "Um ou mais backups falharam."
+    printf "\n%s\n" "Abortando."
+    return 1
+  fi
+
+  titulo "=> ${COR_SUBLINHADO}Execução da opção de backup terminada${COR_RESET}"
+
+  # Verificação de integridade, se solicitado
+  if [[ "$verificar" =~ ^(s|sim)$ && -n "$backup_final" ]]; then
+    verificar_integridade_backup "$destino" "$backup_final"
+  fi
+}
+
+executar_backup_tabela() {
+  local banco="$1"
+  local tabela="$2"
+  local destino="$3"
+  local compactar="$4"
+  local verificar="$5"
+  local data_atual
+  data_atual=$(date +"%Y-%m-%d_%H%M%S")
+
+  titulo "=> ${COR_SUBLINHADO}Executando opção de backup de tabela${COR_RESET}"
+
+  if ! validar_diretorio "$destino"; then
+    return 1
+  fi
+  log_success "Diretório de destino definido: $COR_DESTAQUE1$destino$COR_RESET"
+
+  if ! testar_conexao_mysql; then
+    return 1
+  fi
+
+  if ! executar_mysql "$SGBD_USERNAME" "$SGBD_USER_PWD" -e "USE \`$banco\`;" 2>/dev/null; then
+    log_error "Banco de dados '$banco' não encontrado."
+    printf "\n%s\n" "Abortando."
+    return 1
+  fi
+
+  if ! executar_mysql "$SGBD_USERNAME" "$SGBD_USER_PWD" -e "SELECT 1 FROM \`$banco\`.\`$tabela\` LIMIT 1;" &>/dev/null; then
+    log_error "Tabela '$tabela' não encontrada no banco '$banco'."
+    printf "\n%s\n" "Abortando."
+    return 1
+  fi
+
+  mkdir -p "$destino/$data_atual"
+
+  log_info "Realizando backup da tabela '$tabela' no banco '${banco}'"
+  
+  local dump_file="$destino/$data_atual/${banco}.${tabela}.sql"
+  if ! executar_mysqldump "$SGBD_USERNAME" "$SGBD_USER_PWD" $SGBD_PARAM "$banco" "$tabela" > "$dump_file"; then
+    log_error "Erro ao fazer backup da tabela: $COR_DESTAQUE2$banco.$tabela$COR_RESET"
+    return 1
+  fi
+
+  gerar_checksum "$dump_file" || log_warn "Não foi possível gerar o checksum para: $COR_DESTAQUE2$dump_file$COR_RESET"
+
+  local backup_final="$data_atual"
+
+  if [[ "$compactar" =~ ^(s|sim)$ ]]; then
+    if testar_depend_compactacao; then
+      log_info "Compactando backup em tar.bz2..."
+      if tar -cjf "$destino/$data_atual.tar.bz2" -C "$destino" --remove-files "$data_atual"; then
+        log_success "Backup concluído e armazenado em: $COR_DESTAQUE1$destino/$data_atual.tar.bz2$COR_RESET"
+        backup_final="$data_atual.tar.bz2"
+      else
+        log_error "Erro ao compactar o backup. O backup foi realizado, mas não foi compactado."
+      fi
+    else
+      log_error "Compactação não realizada por falta de dependências."
+    fi
+  else
+    log_success "Backup concluído em: $COR_DESTAQUE1$destino/$data_atual$COR_RESET"
+  fi
+
+  titulo "=> ${COR_SUBLINHADO}Execução do backup de tabela terminada${COR_RESET}"
+
+  if [[ "$verificar" =~ ^(s|sim)$ && -n "$backup_final" ]]; then
+    verificar_integridade_backup "$destino" "$backup_final"
+  fi
+
+}
+
+verificar_integridade_backup() {
+  local destino="$1"
+  local backup="$2"
+  local backup_final="$destino/$backup"
+  local temp_dir=""
+  local arquivos_sql=()
+
+  titulo "=> ${COR_SUBLINHADO}Executando verificação de integridade de backup${COR_RESET}"
+  log_info "Caminho completo do backup: $COR_DESTAQUE1$backup_final$COR_RESET"
+
+  # Validação do diretório
+  if ! validar_diretorio "$destino"; then
+    return 1
+  fi
+
+  # Se for diretório, verifica se contém arquivos .sql ou .tar.bz2
+  if [[ -d "$backup_final" ]]; then
+    local possui_backup
+    possui_backup=$(find "$backup_final" -maxdepth 2 \( -name "*.sql" -o -name "*.tar.bz2" \) | head -n 1)
+    if [[ -z "$possui_backup" ]]; then
+      log_error "Diretório de backup não contém arquivos '.sql' ou '.tar.bz2': $backup_final"
+      printf "\n%s\n" "Abortando."
+      return 1
+    fi
+  fi
+
+  # Teste de conexão Mysql
+  if ! testar_conexao_mysql; then
+    return 1
+  fi
+
+  log_info "Verificando integridade do backup..."
+
+  if [[ -f "$backup_final" && "$backup_final" == *.tar.bz2 ]]; then
+    # backup_final é um arquivo compactado
+    log_info "Backup compactado ${COR_SUBLINHADO}detectado${COR_RESET}."
+
+    if ! testar_depend_compactacao; then
+      log_error "Não é possível verificar o backup compactado sem as dependências necessárias."
+      return 1
+    fi
+
+    temp_dir="$(mktemp -d)"
+    log_info "Descompactando em $temp_dir para verificação..."
+
+    if ! tar -xjf "$backup_final" -C "$temp_dir"; then
+      log_error "Falha ao descompactar $backup"
+      rm -rf "$temp_dir"
+      return 1
+    fi
+
+    arquivos_sql=($(find "$temp_dir" -type f -name "*.sql"))
+
+    # Processa cada dump descompactado
+    for dump_file in "${arquivos_sql[@]}"; do
+      validar_checksum "$dump_file"
+      processar_dump "$dump_file"
+    done
+
+    log_info "Removendo diretório temporário: $temp_dir"
+    rm -rf "$temp_dir"
+
+  elif [[ -d "$backup_final" ]]; then
+    # Primeiro, processar qualquer arquivo .tar.bz2 dentro do diretório
+    local arquivos_tar=($(find "$backup_final" -maxdepth 1 -type f -name "*.tar.bz2"))
+
+    for tar_file in "${arquivos_tar[@]}"; do
+      log_info "Backup compactado ${COR_SUBLINHADO}detectado${COR_RESET}: $tar_file"
+
+      if ! testar_depend_compactacao; then
+      log_error "Não é possível verificar o backup compactado sem as dependências necessárias."
+      return 1
+      fi
+
+	  temp_dir="$(mktemp -d)"
+      log_info "Descompactando em $temp_dir para verificação..."
+
+      if ! tar -xjf "$tar_file" -C "$temp_dir"; then
+        log_error "Falha ao descompactar $tar_file"
+        rm -rf "$temp_dir"
+        continue
+      fi
+
+      # Verifica .sql descompactados
+      local temp_sql_files=($(find "$temp_dir" -type f -name "*.sql"))
+
+      if [[ "${#temp_sql_files[@]}" -eq 0 ]]; then
+        log_warn "Nenhum arquivo '.sql' encontrado dentro do arquivo: $tar_file"
+      else
+        # Processa cada dump descompactado
+        for dump_file in "${temp_sql_files[@]}"; do
+          validar_checksum "$dump_file"
+          processar_dump "$dump_file"
+        done
+      fi
+
+      log_info "Removendo diretório temporário: $temp_dir"
+      rm -rf "$temp_dir"
+    done
+
+    # Depois, processa arquivos .sql diretamente no diretório
+    arquivos_sql=($(find "$backup_final" -type f -name "*.sql"))
+
+    if [[ "${#arquivos_sql[@]}" -eq 0 ]]; then
+      log_warn "Não há arquivos '.sql' para verificar no destino ou em subpastas: $COR_DESTAQUE1$backup_final$COR_RESET"
+    else
+      log_info "Arquivo '.sql' em diretório para verificação ${COR_SUBLINHADO}detectado${COR_RESET}."
+      # Processa cada dump
+      for dump_file in "${arquivos_sql[@]}"; do
+        validar_checksum "$dump_file"
+        processar_dump "$dump_file"
+      done
+    fi
+
+  else
+    log_error "Backup inválido: $backup"
+    return 1
+  fi
+
+  titulo "=> ${COR_SUBLINHADO}Execução da opção de verificação de integridade terminada${COR_RESET}"
+}
+
+verificar_pre_requisitos() {
+  local dependencias=("mysqldump" "mysqladmin" "mysql" "sha256sum" "tar" "bzip2")
+  local faltando=0
+  local confirmar_resp="s|sim|n|nao"
+
+  titulo "=> ${COR_SUBLINHADO}Verificação de pré-requisitos${COR_RESET}"
+
+  # 1. Testar dependências
+  log_info "Verificando dependências do sistema..."
+  for cmd in "${dependencias[@]}"; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+      log_error "Dependência '$cmd' não encontrada. Instale com o gerenciador de pacotes correspondente ao seu S.O."
+      faltando=1
+    else
+      log_success "Dependência '$cmd' encontrada: $COR_TEXTO5$(command -v $cmd)$COR_RESET"
+    fi
+  done
+
+  # 2. Testar diretório padrão
+  log_info "Verificando existência do diretório padrão: $COR_DESTAQUE1$DEFAULT_DESTINO$COR_RESET"
+  if [[ ! -d "$DEFAULT_DESTINO" ]]; then
+    log_warn "Diretório padrão não encontrado!"
+    local confirmar=""
+    while [[ ! "$confirmar" =~ ^($confirmar_resp)$ ]]; do
+      printf "%s\n"
+      read -rp "Deseja criar o diretório? (s/sim ou n/nao): " confirmar
+      [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$confirmar" >> "$LOGFILE"
+      printf "%s\n"
+      confirmar=$(echo "$confirmar" | tr '[:upper:]' '[:lower:]')
+      if [[ ! "$confirmar" =~ ^($confirmar_resp)$ ]]; then
+        printf "%s\n"
+        log_error "Resposta inválida. Digite 's/sim' ou 'n/nao'."
+        printf "%s\n"
+        confirmar=""
+      fi
+    done
+    if [[ "$confirmar" =~ ^(s|sim)$ ]]; then
+      mkdir -p "$DEFAULT_DESTINO" && log_success "Diretório criado: $COR_DESTAQUE1$DEFAULT_DESTINO$COR_RESET"
+    else
+      log_warn "Diretório padrão não foi criado."
+    fi
+  else
+    log_success "Diretório padrão encontrado."
+  fi
+
+  # Verificar permissão de escrita no diretório padrão e espaço disponível
+  if [[ ! -w "$DEFAULT_DESTINO" ]]; then
+    log_error "Sem permissão de escrita no diretório: $COR_DESTAQUE1$DEFAULT_DESTINO$COR_RESET"
+    faltando=1
+  else
+    log_success "Permissão de escrita confirmada no diretório: $COR_DESTAQUE1$DEFAULT_DESTINO$COR_RESET"
+
+    log_info "Verificando espaço em disco no diretório padrão..."
+    ponto_montagem=$(df -h "$DEFAULT_DESTINO" | awk 'NR==2 {print $6}')
+    espaco_disp=$(df -h "$DEFAULT_DESTINO" | awk 'NR==2 {print $4}')
+    log_info "Ponto de montagem: $COR_DESTAQUE1$ponto_montagem$COR_RESET"
+    log_info "Espaço disponível: $COR_SUBLINHADO$espaco_disp$COR_RESET"
+  fi
+
+  # 3. Testar existência do usuário MySQL
+  local admin_user=""
+  local admin_pwd=""
+
+  while [[ -z "$admin_user" ]]; do
+    printf "%s\n"
+    read -rp "Informe o login de um usuário administrador do MySQL para verificar a conta '$SGBD_USERNAME': " admin_user
+    [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$admin_user" >> "$LOGFILE"
+    printf "%s\n"
+    [[ -z "$admin_user" ]] && log_error "Usuário administrador não pode ser vazio." && printf "%s\n"
+  done
+
+  while [[ -z "$admin_pwd" ]]; do
+    read -rsp "Informe a senha do usuário '$admin_user': " admin_pwd
+    printf "%s\n"
+    [[ -z "$admin_pwd" ]] && printf "%s\n" && log_error "Senha não pode ser vazia." && printf "%s\n"
+  done
+
+  # Testar autenticação do admin_user
+  printf "%s\n"
+  log_info "Testando autenticação do usuário administrador '$admin_user'..."
+  if ! executar_mysql "$admin_user" "$admin_pwd" -e "SELECT 1;" &>/dev/null; then
+    log_error "Falha na autenticação com o usuário '$admin_user'. Verifique login e senha."
+    printf "\n%s\n" "Abortando."
+    return 1
+  fi
+  log_success "Autenticação com o usuário '$admin_user' realizada com sucesso."
+
+  if ! executar_mysql "$admin_user" "$admin_pwd" -e "SELECT User FROM mysql.user WHERE User = '$SGBD_USERNAME';" | grep -q "$SGBD_USERNAME"; then
+    log_warn "Conta '$SGBD_USERNAME' não encontrada."
+    local resp_user=""
+    while [[ ! "$resp_user" =~ ^($confirmar_resp)$ ]]; do
+      printf "%s\n"
+      read -rp "Deseja criar a conta '$SGBD_USERNAME'? (s/sim ou n/nao): " resp_user
+      [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$resp_user" >> "$LOGFILE"
+      resp_user=$(echo "$resp_user" | tr '[:upper:]' '[:lower:]')
+      if [[ ! "$resp_user" =~ ^($confirmar_resp)$ ]]; then
+        printf "%s\n"
+        log_error "Resposta inválida. Digite 's/sim' ou 'n/nao'."
+        resp_user=""
+      fi
+    done
+
+    printf "%s\n"
+
+    if [[ "$resp_user" =~ ^(s|sim)$ ]]; then
+      executar_mysql "$admin_user" "$admin_pwd" -e "
+        CREATE USER '$SGBD_USERNAME'@'localhost' IDENTIFIED BY '$SGBD_USER_PWD';
+        GRANT SELECT, LOCK TABLES, SHOW VIEW, EVENT, TRIGGER, ALTER ROUTINE, EXECUTE, PROCESS, RELOAD, REPLICATION CLIENT ON *.* TO '$SGBD_USERNAME'@'localhost';
+        FLUSH PRIVILEGES;" \
+        && log_success "Conta '$SGBD_USERNAME' criada com as permissões necessárias." \
+        || log_error "Falha ao criar a conta '$SGBD_USERNAME'."
+    else
+      log_warn "Conta MySQL '$SGBD_USERNAME' não foi criada."
+      faltando=1
+    fi
+  else
+    log_success "Conta '$SGBD_USERNAME' já existe."
+  fi
+
+  # 6. Resultado final
+  if [[ "$faltando" -eq 1 ]]; then
+    log_error "Um ou mais pré-requisitos não foram atendidos."
+    return 1
+  else
+    log_success "Todos os pré-requisitos foram verificados com sucesso."
+    return 0
+  fi
+}
+
+# Lista as bases de dados existentes com seus tamanhos
+listar_databases_info() {
+  titulo "${COR_TEXTO2}  ${COR_SUBLINHADO}Bases de dados existentes com seus tamanhos:${COR_RESET}"
+  printf "%s\n"
+  local mysql_info
+  mysql_info=$(executar_mysql "$admin_user" "$admin_pwd" -e "
+    SELECT table_schema AS 'Database',
+           ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS 'Size (MB)'
+    FROM information_schema.tables
+    GROUP BY table_schema;" -s -N)
+
+  tabela "\033[104;1m%-30s | %-15s\033[m\n" "Database" "Tamanho (MB)"
+  tabela "\033[1m$(printf '%*s' 48 '' | tr ' ' '-')\033[0m"
+  echo "$mysql_info" | awk '{printf "%-30s | %10s\n", $1, $2}'
+  printf -- '%.0s-' {1..48}
+  printf "%s\n"
+}
+
+# Verificar usuários e hosts
+listar_usuarios_info() {
+  titulo "${COR_TEXTO2}  ${COR_SUBLINHADO}Usuários e hosts no MySQL/MariaDB:${COR_RESET}"
+  printf "%s\n"
+  local user_host_info
+  user_host_info=$(executar_mysql "$admin_user" "$admin_pwd" -e "
+    SELECT user, host FROM mysql.user;" -s -N)
+
+  tabela "\033[104;1m%-31s | %-15s\033[m\n" "Usuário" "Host"
+  tabela "\033[1m$(printf '%*s' 47 '' | tr ' ' '-')\033[0m"
+  echo "$user_host_info" | awk '{printf "%-30s | %-15s\n", $1, $2}'
+  printf -- '%.0s-' {1..47}
+  printf "%s\n"
+}
+
+# Listagem geral dos privilégios dos usuários
+listar_usuarios_priv_info() {
+  titulo "${COR_TEXTO2}  ${COR_SUBLINHADO}Privilégios dos usuários:${COR_RESET}"
+  printf "%s\n"
+  
+  local privileges_info
+  privileges_info=$(executar_mysql "$admin_user" "$admin_pwd" -e "
+    SELECT grantee, table_catalog, privilege_type, is_grantable
+    FROM information_schema.user_privileges;" -s -N)
+
+  tabela "\033[104;1m%-40s | %-20s | %-30s | %-15s\033[m\n" \
+    "Usuário/Entidade concedida" "Catálogo da Tabela" "Tipo de Privilégio" "É concedida"
+  tabela "\033[1m$(printf '%*s' 110 '' | tr ' ' '-')\033[0m"
+  echo "$privileges_info" | awk '{printf "%-39s | %-19s | %-29s | %-15s\n", $1, $2, $3, $4}'
+  printf -- '%.0s-' {1..110}
+  printf "%s\n"
+}
+
+# Função para traduzir o escopo para forma mais amigável (usado por "listar_usuarios_priv_db_info()")
+traduz_scope() {
+  local raw_scope="$1"
+
+  case "$raw_scope" in
+    "*.*")
+      echo "TODOS OS BANCOS E TABELAS"
+      ;;
+    \`*\`.\*)
+      banco=$(echo "$raw_scope" | sed -E "s/^\\\`(.+)\\\`\.\*$/\1/")
+      echo "TODAS AS TABELAS DO BANCO '$banco'"
+      ;;
+    \`*\`.\`*\`)
+      banco=$(echo "$raw_scope" | sed -E "s/^\\\`(.+)\\\`\.\\\`(.+)\\\`$/\1.\2/")
+      echo "TABELA $banco"
+      ;;
+    *)
+      echo "$raw_scope"
+      ;;
+  esac
+}
+
+# Permissões dos usuários nos banco de dados
+listar_usuarios_priv_db_info() {
+  titulo "${COR_TEXTO2}  ${COR_SUBLINHADO}Privilégios dos usuários em banco de dados:${COR_RESET}"
+  printf "%s\n"
+  
+  # Largura máxima por coluna
+  MAX_USER=20
+  MAX_HOST=20
+  MAX_PRIVS=30
+  MAX_SCOPE=40   # escopo + tradução
+
+  # Cabeçalho
+  tabela "\033[104;1m%-$((MAX_USER +1))s | %-${MAX_HOST}s | %-$((MAX_PRIVS +1))s | %-${MAX_SCOPE}s\033[m\n" "Usuário" "Host" "Privilégios" "Escopo"
+  tabela "\033[1m$(printf -- '%.0s-' {1..119})\033[0m"
+
+  # Lista usuários e hosts
+  executar_mysql "$admin_user" "$admin_pwd" -Nse "SELECT user, host FROM mysql.user;" | \
+  while read -r USER HOST; do
+    # Pega os grants para cada user@host
+    GRANTS=$(executar_mysql "$admin_user" "$admin_pwd" -Nse "SHOW GRANTS FOR '$USER'@'$HOST';")
+
+    while IFS= read -r GRANT_LINE; do
+      # Extrai privilégios e escopo
+      PRIVS=$(echo "$GRANT_LINE" | sed -n "s/^GRANT\s*\(.*\)\s*ON\s.*$/\1/p")
+      SCOPE=$(echo "$GRANT_LINE" | sed -n "s/^GRANT\s.*\sON\s*\(.*\)\sTO\s.*$/\1/p")
+
+      [ -z "$PRIVS" ] && PRIVS="N/A"
+      [ -z "$SCOPE" ] && SCOPE="N/A"
+	
+      SCOPE_TRADUZIDO=$(traduz_scope "$SCOPE")
+      SCOPE_FINAL="$SCOPE_TRADUZIDO ($SCOPE)"
+
+      # Quebra privilégios e escopo em múltiplas linhas
+      PRIVS_LINES=$(echo "$PRIVS" | fold -sw $MAX_PRIVS)
+      PRIVS_LINE_COUNT=$(echo "$PRIVS_LINES" | wc -l)
+
+      SCOPE_LINES=$(echo "$SCOPE_FINAL" | fold -sw $MAX_SCOPE)
+      SCOPE_LINE_COUNT=$(echo "$SCOPE_LINES" | wc -l)
+
+      # Determina o número máximo de linhas necessárias
+      MAX_LINES=$(( PRIVS_LINE_COUNT > SCOPE_LINE_COUNT ? PRIVS_LINE_COUNT : SCOPE_LINE_COUNT ))
+
+      for (( i=1; i<=MAX_LINES; i++ )); do
+        if [ $i -eq 1 ]; then
+          printf "%-${MAX_USER}s | %-${MAX_HOST}s | %-${MAX_PRIVS}s | %-${MAX_SCOPE}s\n" \
+          "$USER" "$HOST" "$(echo "$PRIVS_LINES" | sed -n "${i}p")" "$(echo "$SCOPE_LINES" | sed -n "${i}p")"
+        else
+          printf "%-${MAX_USER}s | %-${MAX_HOST}s | %-${MAX_PRIVS}s | %-${MAX_SCOPE}s\n" \
+          "" "" "$(echo "$PRIVS_LINES" | sed -n "${i}p")" "$(echo "$SCOPE_LINES" | sed -n "${i}p")"
+        fi
+      done
+    done <<< "$GRANTS"
+  done
+  printf -- '%.0s-' {1..119}
+  printf "%s\n"
+}
+
+# Coleta de informações básicas do Mysql/Mariadb (baseado no script audit.sh de Evandro S. Nascimento)
+check_mysql_info() {
+  log_info "Coletando informações do MySQL/MariaDB..."
+
+  local admin_user=""
+  local admin_pwd=""
+
+  printf "%s\n"
+
+  while [[ -z "$admin_user" ]]; do
+    read -rp "Informe o login de um usuário administrador do MySQL: " admin_user
+    [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$admin_user" >> "$LOGFILE"
+    printf "%s\n"
+    [[ -z "$admin_user" ]] && log_error "Usuário administrador não pode ser vazio." && printf "%s\n"
+  done
+
+  while [[ -z "$admin_pwd" ]]; do
+    read -rsp "Informe a senha do usuário '$admin_user': " admin_pwd
+    printf "%s\n"
+    [[ -z "$admin_pwd" ]] && printf "%s\n" && log_error "Senha não pode ser vazia." && printf "%s\n"
+  done
+
+  printf "%s\n"
+
+  log_info "Testando autenticação do usuário administrador '$admin_user'..."
+  if ! executar_mysql "$admin_user" "$admin_pwd" -e "SELECT 1;" &>/dev/null; then
+    log_error "Falha na conexão com o MySQL em $COR_DESTAQUE2$SGBD_HOST:$SGBD_PORT$COR_RESET usando o usuário '$SGBD_USERNAME'. Verifique login, senha e demais parâmetros."
+    printf "\n%s\n" "Abortando."
+    return 1
+  fi
+  log_success "Autenticação com o usuário '$admin_user' realizada com sucesso."
+  printf "%s\n"
+
+  # Exibe a versão do MySQL
+  local mysql_version
+  mysql_version=$(executar_mysql "$admin_user" "$admin_pwd" --version)
+  titulo "${COR_TEXTO2}  ${COR_SUBLINHADO}Versão do MySQL/MariaDB:${COR_RESET} $mysql_version"
+  printf "%s\n"
+
+  # Lista as bases de dados existentes com seus tamanhos
+  listar_databases_info
+
+  # Verificar usuários e hosts
+  listar_usuarios_info
+
+  # Listagem geral dos privilégios dos usuários
+  listar_usuarios_priv_info
+
+  # Permissões dos usuários nos banco de dados
+  listar_usuarios_priv_db_info
+
+  # Informações adicionais: 
+  local mysqladmin_status
+  mysqladmin_status=$(executar_mysqladmin "$admin_user" "$admin_pwd" status)
+  
+  # Uptime
+  local uptime_mysql
+  uptime_mysql=$(echo "$mysqladmin_status" | \
+  awk '/Uptime:/ {
+    uptime=$2
+    total_hours=int(uptime/3600)
+    days=int(total_hours/24)
+    hours=total_hours%24
+    mins=int((uptime%3600)/60)
+    secs=uptime%60
+    printf("%dd %02d:%02d:%02d\n", days, hours, mins, secs)
+  }')
+
+  titulo "${COR_TEXTO2}  ${COR_SUBLINHADO}Tempo de atividade do MySQL/MariaDB (Uptime):${COR_RESET} $uptime_mysql"
+
+  printf "%s\n"
+
+  # Número de conexões ativas
+  local conexoes_mysql
+  conexoes_mysql=$(echo "$mysqladmin_status" | awk '{print $4}')
+  titulo "${COR_TEXTO2}  ${COR_SUBLINHADO}Conexões ativas:${COR_RESET} $conexoes_mysql"
+  printf "%s\n"
+}
+# =================================================================================
+
+#  3. ========================= CONTROLE DE LOG E STDOUT ==========================
+# Garante que o diretório existe
+mkdir -p "$LOGDIR"
+
+# Converte caracteres para minúsculo
+LOG_DEBUG=$(echo "$LOG_DEBUG" | tr '[:upper:]' '[:lower:]')
+
+# Guarda a saída original do terminal em um descritor alternativo (fd 3)
+if [ -t 1 ]; then
+  exec 3>&1   # Terminal real
+else
+  exec 3>/dev/null  # Silencia se não for terminal (Crontab)
+fi
+
+# Define uma "armadilha" (trap) para que quando o script terminar (EXIT), o descritor 3 seja fechado
+trap 'exec 3>&-' EXIT INT TERM ERR
+
+# Redireciona stdout/stderr para o log com tee (importante para registrar qualquer saída incluindo echo e printf)
+[[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && exec > >(tee -a "$LOGFILE") 2>&1
+# =================================================================================
+
+#  4. ============================== MODO INTERATIVO ==============================
+exibir_menu() {
+    clear >&3
+    sleep 0.2
+    printf "%s\n"
+    titulo "${COR_DESTAQUE3}                         ========== MENU DE BACKUP MYSQL/MARIADB ==========                         ${COR_RESET}"
+    echo "Data da última revisão: $REVISAO_SCRIPT"
+    echo "Versão: $VERSAO_SCRIPT"
+    echo
+    echo "Escolha uma opção:"
+    texto "  [ ${COR_TEXTO2} 1${COR_RESET} ] Backup de todos os Banco de Dados"
+    texto "  [ ${COR_TEXTO2} 2${COR_RESET} ] Backup de um Banco de Dados específico"
+    texto "  [ ${COR_TEXTO2} 3${COR_RESET} ] Backup de uma Tabela de um Banco de Dados"
+    texto "  [ ${COR_TEXTO2} 4${COR_RESET} ] Verificar integridade de um backup"
+    texto "  [ ${COR_TEXTO2} 5${COR_RESET} ] Excluir backups antigos"
+    texto "  [ ${COR_TEXTO2} 6${COR_RESET} ] Checar pré-requisitos deste script"
+    texto "  [ ${COR_TEXTO2} 7${COR_RESET} ] Informações sobre o SGBD do servidor"
+    if [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]]; then
+      texto "  [ ${COR_TEXTO2} 8${COR_RESET} ] Desativar log (debug)"
+    else
+      texto "  [ ${COR_TEXTO2} 8${COR_RESET} ] Ativar log (debug)"
+    fi
+    texto "  [ ${COR_TEXTO2} 9${COR_RESET} ] Ver ajuda"
+    texto "  [ ${COR_TEXTO2}10${COR_RESET} ] ${COR_TEXTO1}Sair${COR_RESET}"
+    echo
+    rodape $RODAPE_SIZE $COR_DESTAQUE3
+    
+    read -rp "  Digite sua escolha [1-10]: " opcao
+    [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$opcao" >> "$LOGFILE"
+    printf "%s\n"
+}
+
+opcao_menu_backup() {
+  local dir=""
+  local compactar=""
+  local db=""
+  local confirmar=""
+  local confirmar_resp="s|sim|n|nao"
+  local verificar=""
+
+  if [ "$opcao" = 2 ]; then
+    while [[ -z "$db" ]]; do
+      read -rp "Informe o nome do banco de dados: " db
+      [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$db" >> "$LOGFILE"
+      printf "%s\n"
+      [[ -z "$db" ]] && log_warn "O nome do banco de dados não pode ser vazio." && printf "%s\n"
+    done
+  fi
+
+  read -rp "Informe o diretório de destino (Enter para padrão [$DEFAULT_DESTINO]): " dir
+  [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$dir" >> "$LOGFILE"
+  dir="${dir:-$DEFAULT_DESTINO}"
+  printf "%s\n"
+
+  while [[ ! "$confirmar" =~ ^($confirmar_resp)$ ]]; do
+    read -rp "Deseja compactar o backup em formato .tar.bz2? (s/sim ou n/nao) [$DEFAULT_COMPACTAR]: " confirmar
+    [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$confirmar" >> "$LOGFILE"
+    confirmar="${confirmar:-$DEFAULT_COMPACTAR}"
+    confirmar=$(echo "$confirmar" | tr '[:upper:]' '[:lower:]')
+
+    # Verifica se a resposta é válida
+    if [[ ! "$confirmar" =~ ^($confirmar_resp)$ ]]; then
+      printf "%s\n"
+      log_error "Resposta inválida. Digite 's/sim' ou 'n/nao'."
+      printf "%s\n"
+      confirmar="" # limpa para repetir
+    fi
+  done
+
+  compactar="$confirmar"
+  printf "%s\n"
+
+  # Pergunta sobre verificação de integridade
+  while [[ ! "$verificar" =~ ^($confirmar_resp)$ ]]; do
+    read -rp "Deseja verificar a integridade do backup após a execução? (s/sim ou n/nao) [$DEFAULT_VERIFICAR]: " verificar
+    [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$verificar" >> "$LOGFILE"
+    verificar="${verificar:-$DEFAULT_VERIFICAR}"
+    verificar=$(echo "$verificar" | tr '[:upper:]' '[:lower:]')
+
+    if [[ ! "$verificar" =~ ^($confirmar_resp)$ ]]; then
+      printf "%s\n"
+      log_error "Resposta inválida. Digite 's/sim' ou 'n/nao'."
+      printf "%s\n"
+      verificar="" # limpa para repetir
+    fi
+  done
+
+  printf "%s\n"
+
+  if [ "$opcao" = 1 ]; then
+    executar_backup 1 "$dir" "$compactar" "" "$verificar"
+  else
+    executar_backup 2 "$dir" "$compactar" "$db" "$verificar"
+  fi
+}
+
+opcao_menu_backup_tabela() {
+  local db=""
+  local tbl=""
+  local dir=""
+  local confirmar=""
+  local confirmar_resp="s|sim|n|nao"
+  local compactar=""
+  local verificar=""
+
+  while [[ -z "$db" ]]; do
+    read -rp "Informe o nome do banco de dados: " db
+    [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$db" >> "$LOGFILE"
+    printf "%s\n"
+    [[ -z "$db" ]] && log_warn "O nome do banco de dados não pode ser vazio."
+  done
+
+  while [[ -z "$tbl" ]]; do
+    read -rp "Informe o nome da tabela: " tbl
+    [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$tbl" >> "$LOGFILE"
+    printf "%s\n"
+    [[ -z "$tbl" ]] && log_warn "O nome da tabela não pode ser vazio."
+  done
+
+  read -rp "Informe o diretório de destino (Enter para padrão [$DEFAULT_DESTINO]): " dir
+  [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$dir" >> "$LOGFILE"
+  dir="${dir:-$DEFAULT_DESTINO}"
+  printf "%s\n"
+
+  # Compactação
+  while [[ ! "$confirmar" =~ ^($confirmar_resp)$ ]]; do
+    read -rp "Deseja compactar o backup em formato .tar.bz2? (s/sim ou n/nao) [$DEFAULT_COMPACTAR]: " confirmar
+    [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$confirmar" >> "$LOGFILE"
+    confirmar="${confirmar:-$DEFAULT_COMPACTAR}"
+    confirmar=$(echo "$confirmar" | tr '[:upper:]' '[:lower:]')
+
+    # Verifica se a resposta é válida
+    if [[ ! "$confirmar" =~ ^($confirmar_resp)$ ]]; then
+      printf "%s\n"
+      log_error "Resposta inválida. Digite 's/sim' ou 'n/nao'."
+      printf "%s\n"
+      confirmar="" # limpa para repetir
+    fi
+  done
+
+  compactar="$confirmar"
+  printf "%s\n"
+
+  # Verificação de integridade
+  while [[ ! "$verificar" =~ ^($confirmar_resp)$ ]]; do
+    read -rp "Deseja verificar a integridade do backup após a execução? (s/sim ou n/nao) [$DEFAULT_VERIFICAR]: " verificar
+    [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$verificar" >> "$LOGFILE"
+    verificar="${verificar:-$DEFAULT_VERIFICAR}"
+    verificar=$(echo "$verificar" | tr '[:upper:]' '[:lower:]')
+
+    if [[ ! "$verificar" =~ ^($confirmar_resp)$ ]]; then
+      printf "%s\n"
+      log_error "Resposta inválida. Digite 's/sim' ou 'n/nao'."
+      printf "%s\n"
+      verificar="" # limpa para repetir
+    fi
+  done
+
+  printf "%s\n"
+
+  executar_backup_tabela "$db" "$tbl" "$dir" "$compactar" "$verificar"
+}
+
+opcao_menu_integridade() {
+  local destino=""
+  local backup=""
+
+  read -rp "Informe o diretório raiz do backup (Enter para padrão [$DEFAULT_DESTINO]): " destino
+  [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$destino" >> "$LOGFILE"
+  destino="${destino:-$DEFAULT_DESTINO}"
+  printf "%s\n"
+ 
+  while [[ -z "$backup" ]]; do
+    read -rp "Informe o nome do arquivo (tar.bz2) ou diretório com o(s) dump(s) '.sql': " backup
+    [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$backup" >> "$LOGFILE"
+    printf "%s\n"
+    [[ -z "$backup" ]] && log_warn "O nome não pode ser vazio." && printf "%s\n"
+  done
+  
+  verificar_integridade_backup "$destino" "$backup"
+}
+
+opcao_menu_excluir() {
+  local destino=""
+  local dias=""
+  local confirmar=""
+  local confirmar_resp="sim|nao"
+
+  read -rp "Informe o diretório para busca dos backups (Enter para padrão [$DEFAULT_DESTINO]): " destino
+  [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$destino" >> "$LOGFILE"
+  destino="${destino:-$DEFAULT_DESTINO}"
+  printf "%s\n"
+
+  # Loop de validação para aceitar apenas números inteiros positivos
+  while true; do
+    read -rp "Excluir backups com mais de quantos dias? (Enter para padrão [$DEFAULT_RETENTION_DAYS]): " dias
+    [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$dias" >> "$LOGFILE"
+    dias="${dias:-$DEFAULT_RETENTION_DAYS}"
+    printf "%s\n"
+
+    if [[ "$dias" =~ ^[0-9]+$ ]]; then
+      break
+    else
+      log_error "Valor inválido. Digite apenas números inteiros positivos."
+      printf "%s\n"
+    fi
+  done
+
+  while [[ ! "$confirmar" =~ ^($confirmar_resp)$ ]]; do
+    read -rp "Tem certeza que deseja excluir os backups com mais de $dias dias? (Responda com sim ou nao): " confirmar
+
+    [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$confirmar" >> "$LOGFILE"
+
+    if [[ ! "$confirmar" =~ ^($confirmar_resp)$ ]]; then
+      printf "%s\n"
+      log_error "Resposta inválida. Digite exatamente 'sim' ou 'nao'."
+      printf "%s\n"
+      confirmar="" # limpa para repetir
+    fi
+  done
+
+  confirmar=$(echo "$confirmar" | tr '[:upper:]' '[:lower:]')
+  printf "%s\n"
+
+  if [[ "$confirmar" == "sim" ]]; then
+    excluir_backups_antigos "$destino" "$dias"
+  else
+    log_warn "Exclusão de backups antigos cancelada pelo usuário."
+  fi
+}
+
+opcao_menu_debug() {
+  novo_estado="sim"
+  acao="ativar"
+
+  if [ "$LOG_DEBUG" = "sim" ]; then
+    novo_estado="nao"
+    acao="desativar"
+  fi
+
+  read -rp "Deseja realmente $acao o log (debug)? (s/sim ou n/nao) [$LOG_DEBUG]: " confirma
+  [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$confirma" >> "$LOGFILE"
+  confirma="${confirma:-$LOG_DEBUG}"
+  confirma=$(echo "$confirma" | tr '[:upper:]' '[:lower:]')
+  printf "%s\n"
+
+  if [[ "$confirma" =~ ^(s|sim)$ ]]; then
+    LOG_DEBUG="$novo_estado"
+    if [ "$LOG_DEBUG" = "sim" ]; then
+      exec > >(tee -a "$LOGFILE") 2>&1
+      printf "%s\n"
+      log_info "O Log (debug) foi ${COR_TEXTO5}ativado${COR_RESET}."
+    else
+      exec 1>&3 2>&3 # Retorna para o descritor real definido no início do script (exec 3>&1)
+      log_info "O Log (debug) foi ${COR_TEXTO1}desativado${COR_RESET}."
+    fi
+    sleep 1
+  else
+    echo "Operação cancelada."
+  fi
+}
+
+opcao_menu_requisitos() {
+  verificar_pre_requisitos
+}
+
+opcao_menu_mysql_info() {
+  check_mysql_info
+}
+
+opcao_menu_ajuda() {
+  clear >&3
+  sleep 0.2
+  titulo "${COR_DESTAQUE1}                                ========== MENU DE AJUDA ==========                                 ${COR_RESET}"
+  mostrar_ajuda
+  printf "%s\n"
+  rodape $RODAPE_SIZE $COR_DESTAQUE1
+  read -rp "Pressione Enter para voltar ao menu..."
+  printf "%s\n"
+  menu_interativo
+}
+
+menu_interativo() {
+  while true; do
+    exibir_menu
+
+    case "$opcao" in
+      1|2) opcao_menu_backup ;;
+      3) opcao_menu_backup_tabela ;;
+      4) opcao_menu_integridade ;;
+      5) opcao_menu_excluir ;;
+      6) opcao_menu_requisitos;;
+      7) opcao_menu_mysql_info;;
+      8) opcao_menu_debug ;;
+      9) opcao_menu_ajuda ;;
+      10) 
+        echo "Saindo..."
+        exit 0
+        ;;
+      *)
+        echo "Opção inválida. Tente novamente."
+        sleep 2
+        menu_interativo
+        ;;
+    esac
+
+    unset $dir $db
+    printf "%s\n"
+    sleep 0.2
+    read -rp "Pressione Enter para voltar ao menu..."
+    printf "%s\n"
+    sleep 0.2
+  done
+}
+# =================================================================================
+
+#  5. =========================== PARSING DE ARGUMENTOS ===========================
+modo_argumentos=0
+arg_tipo=""
+arg_banco=""
+arg_tabela=""
+arg_destino=""
+arg_compress=""
+arg_retencao_dias=""
+arg_verify="nao"
+arg_check=""
+arg_mysqlinfo=""
+
+# Funções do Parsing
+mostrar_ajuda() { # Menu ajuda
+  echo
+  echo "Uso: $(basename "$0") [-a] [-d <database>] [-t <tabela>] [-o <diretório_destino>] [-c] [-l] [-r <dias>] [-v] [-h] [-C] [-i]"
+  echo
+  echo "Opção:"
+  echo "  <nenhuma>                 Entra no modo interativo"
+  echo "  -a, --all                 Backup de todos os bancos de dados"
+  echo "  -d, --database <nome>     Backup de um banco de dados específico"
+  echo "  -t, --table <tabela>      Backup de uma tabela específica"
+  echo "                            Requer também -d <database>"
+  echo
+  echo "  -o, --output <diretório>  Diretório de destino do backup"
+  echo "                            Opcional com '-a/--all' e '-d/--database'."
+  echo "                            Obrigatório com '-r/--remove' e '-v/--verify'."
+  echo
+  echo "  -c, --compress            Compactar backup em formato .tar.bz2"
+  echo "  -r, --remove <dias>       Remove backups com mais de <dias> dias"
+  echo "                            Requer '-o/--output' especificado."
+  echo
+  echo "  -v, --verify              Verifica a integridade de um backup"
+  echo "                            Quando usado isoladamente (sem '-a' ou '-d'),"
+  echo "                            exige '-o <diretório ou arquivo .tar.bz2>' para localizar"
+  echo "                            o backup a ser verificado."
+  echo "                            Se combinado com '-a' ou '-d', a verificação"
+  echo "                            será feita automaticamente após o backup."
+  echo
+  echo "  -i, --mysql-info          Exibe informações sobre o MySQL/MariaDB"
+  echo "                            Necessário autenticar com usuário administrator."
+  echo
+  echo "  -C, --check               Checar dependências deste script."
+  echo "  -l, --log                 Habilita o log (debug)"
+  echo "  -h, --help                Exibe esta ajuda"
+  echo
+  echo "Exemplos práticos:"
+  echo "  -> Backup de todos os bancos, com compactação e verificação:"
+  echo "     $(basename "$0") -a -c -v"
+  echo "  -> Backup de um banco específico com log:"
+  echo "     $(basename "$0") -d mydatabase -o /backup/banco_dados -l"
+  echo "  -> Backup de uma tabela:"
+  echo "     $(basename "$0") -d mydatabase -t mytable -o /backup/banco_dados"
+  echo "  -> Remover backups com mais de 30 dias:"
+  echo "     $(basename "$0") -r 30 -o /backup/banco_dados"
+  echo "  -> Verificar integridade de backup em diretório:"
+  echo "     $(basename "$0") -v -o /backup/banco_dados/2025-05-24_095744"
+  echo "  -> Verificar integridade de backup compactado:"
+  echo "     $(basename "$0") -v -o /backup/banco_dados/2025-05-24_095744.tar.bz2"
+  echo
+  texto "[${COR_SUBLINHADO}Importante:${COR_RESET}] Os logs deste script, quando habilitados, são gravados em: $COR_DESTAQUE1$LOGFILE$COR_RESET."
+}
+
+parse_args() {
+  usou_all=0
+  usou_database=0
+  usou_tabela=0
+  usou_output=0
+  usou_compress=0
+  usou_remove=0
+  usou_log=0
+  usou_verify=0
+  usou_check=0
+  usou_mysqlinfo=0
+
+  while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+      -a|--all)
+        if [[ "$usou_all" -eq 1 ]]; then
+          printf "%s\n" # Pula 1 linha
+          log_error "A opção -a/--all não pode ser informada mais de uma vez."
+          printf "\n%s\n" "Abortando."
+          exit 1
+        fi
+        arg_tipo="1"
+        modo_argumentos=1
+        usou_all=1
+        ;;
+
+      -d|--database)
+        if [[ "$usou_database" -eq 1 ]]; then
+          printf "%s\n" # Pula 1 linha
+          log_error "A opção -d/--database não pode ser informada mais de uma vez."
+          printf "\n%s\n" "Abortando."
+          exit 1
+        fi
+        shift
+        if [[ -z "$1" || "$1" == -* ]]; then
+          printf "%s\n" # Pula 1 linha
+          log_error "Nome do banco não especificado após -d/--database."
+          printf "\n%s\n" "Abortando."
+          exit 1
+        fi
+        arg_banco="$1"
+        modo_argumentos=1
+        usou_database=1
+        ;;
+
+      -t|--table)
+        if [[ "$usou_tabela" -eq 1 ]]; then
+          printf "%s\n"
+          log_error "A opção -t/--table não pode ser informada mais de uma vez."
+          printf "\n%s\n" "Abortando."
+          exit 1
+        fi
+          shift
+        if [[ -z "$1" || "$1" == -* ]]; then
+          printf "%s\n"
+          log_error "Nome da tabela não especificado após -t/--table."
+          printf "\n%s\n" "Abortando."
+          exit 1
+        fi
+        arg_tabela="$1"
+        modo_argumentos=1
+        usou_tabela=1
+        ;;
+
+      -o|--output)
+        if [[ "$usou_output" -eq 1 ]]; then
+          printf "%s\n" # Pula 1 linha
+          log_error "A opção -o/--output não pode ser informada mais de uma vez."
+          printf "\n%s\n" "Abortando."
+          exit 1
+        fi
+        shift
+        if [[ -z "$1" || "$1" == -* ]]; then
+          printf "%s\n" # Pula 1 linha
+          log_error "Diretório de destino não especificado após -o/--output."
+          printf "\n%s\n" "Abortando."
+          exit 1
+        fi
+        arg_destino="$1"
+        usou_output=1
+        ;;
+
+      -c|--compress)
+        if [[ "$usou_compress" -eq 1 ]]; then
+          printf "%s\n" # Pula 1 linha
+          log_error "A opção -c/--compress não pode ser informada mais de uma vez."
+          printf "\n%s\n" "Abortando."
+          exit 1
+        fi
+        arg_compress="sim"
+        usou_compress=1
+        ;;
+
+      -r|--remove)
+        if [[ "$usou_remove" -eq 1 ]]; then
+          printf "%s\n" # Pula 1 linha
+          log_error "A opção -r/--remove não pode ser informada mais de uma vez."
+          printf "\n%s\n" "Abortando."
+          exit 1
+        fi
+        shift
+        if [[ -z "$1" || "$1" == -* ]]; then
+          printf "%s\n" # Pula 1 linha
+          log_error "Dias de retenção não especificado após -r/--remove."
+          printf "\n%s\n" "Abortando."
+          exit 1
+        fi
+        if ! [[ "$1" =~ ^[0-9]+$ ]]; then
+          printf "%s\n"
+          log_error "Dias de retenção '-r/--remove <dias>' deve ser um número inteiro positivo."
+          printf "\n%s\n" "Abortando."
+          exit 1
+        fi
+        arg_retencao_dias="$1"
+        modo_argumentos=1
+        usou_remove=1
+        ;;
+
+      -v|--verify)
+        if [[ "$usou_verify" -eq 1 ]]; then
+          printf "%s\n"
+          log_error "A opção -v/--verify não pode ser informada mais de uma vez."
+          printf "\n%s\n" "Abortando."
+          exit 1
+        fi
+        arg_verify="sim"
+        modo_argumentos=1
+        usou_verify=1
+        ;;
+
+      -C|--check)
+        if [[ "$usou_check" -eq 1 ]]; then
+          printf "%s\n"
+          log_error "A opção -C/--check não pode ser informada mais de uma vez."
+          printf "\n%s\n" "Abortando."
+          exit 1
+        fi
+        modo_argumentos=1
+        arg_check=1
+        usou_check=1
+        ;;
+
+      -i|--mysql-info)
+        if [[ "$usou_mysqlinfo" -eq 1 ]]; then
+          printf "%s\n"
+          log_error "A opção -i/--mysql-info não pode ser informada mais de uma vez."
+          printf "\n%s\n" "Abortando."
+          exit 1
+        fi
+        modo_argumentos=1
+        arg_mysqlinfo=1
+        usou_mysqlinfo=1
+        ;;
+
+      -l|--log)
+        if [[ "$usou_log" -eq 1 ]]; then
+          printf "%s\n" # Pula 1 linha
+          log_error "A opção -l/--log não pode ser informada mais de uma vez."
+          printf "\n%s\n" "Abortando."
+          exit 1
+        fi
+        if [[ "$LOG_DEBUG" =~ ^(n|nao)$ ]]; then
+          LOG_DEBUG="sim"
+          exec > >(tee -a "$LOGFILE") 2>&1
+        fi
+        usou_log=1
+        ;;
+
+      -h|--help)
+        mostrar_ajuda
+        printf "%s\n"
+        exit 0
+        ;;
+
+      *)
+        printf "%s\n" # Pula 1 linha
+        log_error "Opção desconhecida: $1 (Use -h para ajuda.)"
+        printf "\n%s\n" "Abortando."
+        exit 1
+        ;;
+    esac
+    shift
+  done
+
+  # Proibição de combinação -a e -d
+  if [[ "$usou_all" -eq 1 && "$usou_database" -eq 1 ]]; then
+    printf "%s\n" # Pula 1 linha
+    log_error "As opções -a/--all e -d/--database não podem ser usadas simultaneamente."
+    printf "\n%s\n" "Abortando."
+    exit 1
+  fi
+
+  # Validação -t exige -d
+  if [[ "$usou_tabela" -eq 1 && "$usou_database" -eq 0 ]]; then
+    printf "%s\n"
+    log_error "A opção -t/--table requer que -d/--database seja informado."
+    printf "\n%s\n" "Abortando."
+    exit 1
+  fi
+
+  # Validação -o
+  if [[ "$usou_output" -eq 1 && "$modo_argumentos" -eq 0 ]]; then
+    printf "%s\n" # Pula 1 linha
+    log_error "A opção -o/--output requer -a/--all, -d/--database ou -r/--remove."
+    printf "\n%s\n" "Abortando."
+    exit 1
+  fi
+
+  # Validação -c
+  if [[ "$usou_compress" -eq 1 && "$modo_argumentos" -eq 0 ]]; then
+    printf "%s\n" # Pula 1 linha
+    log_error "A opção -c/--compress requer -a/--all ou -d/--database ou -t/--table."
+    printf "\n%s\n" "Abortando."
+    exit 1
+  fi
+
+  # Validação -r
+  if [[ "$usou_remove" -eq 1 && "$usou_output" -eq 0 ]]; then
+    printf "%s\n" # Pula 1 linha
+    log_error "A opção -r/--remove requer -o/--output."
+    printf "\n%s\n" "Abortando."
+    exit 1
+  fi
+
+  # Validação -v
+  if [[ "$usou_verify" -eq 1 && "$usou_output" -eq 0 && "$usou_all" -eq 0 && "$usou_database" -eq 0 ]]; then
+    printf "%s\n" # Pula 1 linha
+    log_error "A opção -v/--verify, quando sozinha, requer -o/--output."
+    printf "\n%s\n" "Abortando."
+    exit 1
+  fi
+
+  # Validação -C
+  if [[ "$usou_check" -eq 1 ]]; then
+    local total_args=$((usou_all + usou_database + usou_tabela + usou_output + usou_compress + usou_remove + usou_verify + usou_mysqlinfo + usou_check))
+    if [[ "$total_args" -gt 1 ]]; then
+      printf "%s\n" # Pula 1 linha
+      log_error "A opção -C/--check deve ser usada sozinha, sem outras opções."
+      printf "\n%s\n" "Abortando."
+      exit 1
+    fi
+  fi
+
+  # Validação -i
+  if [[ "$usou_mysqlinfo" -eq 1 ]]; then
+    local total_args=$((usou_all + usou_database + usou_tabela + usou_output + usou_compress + usou_remove + usou_verify + usou_check + usou_mysqlinfo))
+    if [[ "$total_args" -gt 1 ]]; then
+      printf "%s\n"
+      log_error "A opção -i/--mysql-info deve ser usada sozinha, sem outras opções."
+      printf "\n%s\n" "Abortando."
+      exit 1
+    fi
+  fi
+
+
+  # Atribuindo arg_tipo conforme passagem de argumentos
+  if [[ "$usou_tabela" -eq 1 ]]; then
+    arg_tipo="3"  # 3 = dump de tabela
+  elif [[ "$usou_database" -eq 1 ]]; then
+    arg_tipo="2"  # 2 = dump de banco
+  elif [[ "$usou_all" -eq 1 ]]; then
+    arg_tipo="1"  # 1 = dump de todos
+  else
+    arg_tipo=""
+  fi
+
+  # Valores padrão
+  arg_destino="${arg_destino:-$DEFAULT_DESTINO}"
+  arg_compress="${arg_compress:-$DEFAULT_COMPACTAR}"
+}
+# ==================================================================================
+
+# 6. ================================== EXECUÇÃO ==================================
+# Obtém os argumentos passados na chamada do script
+parse_args "$@"
+
+printf "%s\n" # Pula 1 linha
+titulo "${COR_DESTAQUE3}${COR_SUBLINHADO}===== Execução iniciada em $(date '+%d/%b/%Y:%H:%M:%S %z') =====${COR_RESET}"
+
+# Modo não interativo
+if [ "$modo_argumentos" -eq 1 ]; then
+  log_warn "Executando em modo ${COR_SUBLINHADO}não${COR_RESET} interativo."
+  [[ "$usou_log" = "1" ]] && log_info "Opção -l/--log informada. O log está ${COR_TEXTO5}ativado${COR_RESET}." # Verifica se -l/--log foi passado como argumento e informa
+
+  # Executa a verificação dos requisitos se informado o argumento
+  if [[ -n "$arg_check" ]]; then
+    verificar_pre_requisitos
+    exit 0
+  fi
+
+  # Mostra Informações sobre o Mysql
+  if [[ -n "$arg_mysqlinfo" ]]; then
+    check_mysql_info
+    exit 0
+  fi
+
+  # Alerta se -o/--output não foi passado como argumento
+  [[ "$usou_output" -eq 0 && "$usou_remove" -eq 0 && "$arg_verify" != "sim" ]] && log_warn "Opção -o/--output ${COR_SUBLINHADO}não${COR_RESET} informada, usando destino padrão: $COR_DESTAQUE1$DEFAULT_DESTINO$COR_RESET"
+
+  # Executa a função de backup a depender do argumento
+  if [ "$arg_tipo" = "1" ]; then
+    executar_backup 1 "$arg_destino" "$arg_compress" "" "$arg_verify"
+  elif [ "$arg_tipo" = "2" ]; then
+    executar_backup 2 "$arg_destino" "$arg_compress" "$arg_banco" "$arg_verify"
+  elif [ "$arg_tipo" = "3" ]; then
+    executar_backup_tabela "$arg_banco" "$arg_tabela" "$arg_destino" "$arg_compress" "$arg_verify"
+  fi
+
+  # Executa a função de exclusão de backups se informado o argumento
+  if [[ -n "$arg_retencao_dias" ]]; then
+    excluir_backups_antigos "$arg_destino" "$arg_retencao_dias"
+  fi
+
+  # Se não houver tipo de backup nem exclusão, mas tiver --verify, executa verificação isolada
+  if [[ "$arg_verify" == "sim" && -z "$arg_tipo" && -z "$arg_retencao_dias" ]]; then
+    verificar_integridade_backup "$(dirname "$arg_destino")" "$(basename "$arg_destino")"
+  fi
+
+  exit 0
+fi
+
+# Modo interativo
+menu_interativo
+# ===================================== FIM =======================================
