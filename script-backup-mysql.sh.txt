@@ -505,7 +505,7 @@ excluir_backups_antigos() {
   titulo "=> ${COR_SUBLINHADO}Execução da opção de exclusão de backups terminada${COR_RESET}"
 }
 
-# Efetua o backup
+# Efetua o backup de banco de dados
 executar_backup() {
   local tipo="$1"
   local destino="$2"
@@ -598,6 +598,7 @@ executar_backup() {
   fi
 }
 
+# Efetua o backup de uma tabela em banco de dados
 executar_backup_tabela() {
   local banco="$1"
   local tabela="$2"
