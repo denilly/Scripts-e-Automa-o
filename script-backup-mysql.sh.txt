@@ -1154,6 +1154,7 @@ trap 'exec 3>&-' EXIT INT TERM ERR
 # =================================================================================
 
 #  4. ============================== MODO INTERATIVO ==============================
+# As funções a seguir sao utilizadas para construção do menu interativo e chamamento das funções principais
 exibir_menu() {
     clear >&3
     sleep 0.2
@@ -1470,6 +1471,7 @@ menu_interativo() {
 # =================================================================================
 
 #  5. =========================== PARSING DE ARGUMENTOS ===========================
+# Definições das variáveis e funções relacionadas ao uso de argumentos quando não utilizado o menu interativo
 modo_argumentos=0
 arg_tipo=""
 arg_banco=""
