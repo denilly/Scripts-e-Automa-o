@@ -28,7 +28,7 @@ Script para realizar o **backup/dump** de bancos de dados **MySQL/MariaDB**, com
 
 ©️ **Copyright:** 2025 Denilly Carvalho do Carmo.
 
-**Licença:** GNU General Public License (GPL-3.0).
+🛡️ **Licença:** GNU General Public License (GPL-3.0).
 
 ---
 
@@ -95,7 +95,7 @@ Crie o arquivo de configuração do logrotate:
 sudo nano /etc/logrotate.d/script-backup-mysql
 ```
 
-Cole o seguinte conteúdo, **removendo** o sinalizador de comentário `#    ` para ativar a rotação:
+Cole o seguinte conteúdo, para ativar a rotação:
 
 ```logrotate
 /var/log/script-backup-mysql.sh.log {
@@ -123,13 +123,14 @@ sudo /usr/local/sbin/script-backup-mysql.sh
 ### Execução automática com parâmetros (exemplo):
 
 ```bash
-sudo /usr/local/sbin/script-backup-mysql.sh -d /backup/mysql -c -r 7
+sudo /usr/local/sbin/script-backup-mysql.sh -a -c -r 10 -o /backup/mysql
 ```
 
 > Onde:
-> `-d` define o diretório de backup.
+> `-a` realiza backup de todos os bancos de dados.
 > `-c` ativa a compactação.
 > `-r` define a retenção de backups (em dias).
+> `-o` destino do backup.
 
 ---
 
