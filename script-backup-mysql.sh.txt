@@ -301,6 +301,7 @@ validar_checksum() {
   fi
 }
 
+# Processa os Dumps verificando arquivo e comparando banco original em produção
 processar_dump() {
   local dump_file="$1"
 
