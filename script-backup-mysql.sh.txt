@@ -792,6 +792,7 @@ verificar_integridade_backup() {
   titulo "=> ${COR_SUBLINHADO}Execução da opção de verificação de integridade terminada${COR_RESET}"
 }
 
+# Verifica pré-requisitos para execução do script
 verificar_pre_requisitos() {
   local dependencias=("mysqldump" "mysqladmin" "mysql" "sha256sum" "tar" "bzip2")
   local faltando=0
