@@ -7,7 +7,7 @@
 # Data de Criação: 15/05/2025
 # Copyright (c) 2025 Denilly Carvalho do Carmo. Todos os direitos reservados.
 # Licença: GNU General Public License (GPL)
-# Versão: 1.6
+# Versão: 1.0
 
 # NOTAS: Este script é fornecido "como está" e pode ser utilizado e modificado por terceiros,
 #        desde que os créditos ao autor sejam mantidos. Para uso em projetos, por favor, faça
@@ -51,7 +51,7 @@
 #  1. =============================== CONFIGURAÇÕES ===============================
 # Controle de versão
 REVISAO_SCRIPT="30/05/2025"
-VERSAO_SCRIPT="1.6"
+VERSAO_SCRIPT="1.0"
 
 # Parâmetros
 SGBD_USERNAME="login_usuario"    # <-- Informe o usuário com acesso aos Banco de Dados
