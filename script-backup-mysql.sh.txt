@@ -669,6 +669,7 @@ executar_backup_tabela() {
 
 }
 
+# Verifica a integridade de um backup em pasta ou compactado
 verificar_integridade_backup() {
   local destino="$1"
   local backup="$2"
