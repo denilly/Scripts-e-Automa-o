@@ -23,8 +23,11 @@ Script para realizar o **backup/dump** de bancos de dados **MySQL/MariaDB**, com
 ## Autor
 
 **Denilly Carvalho do Carmo**
+
 📅 **Data de criação:** 15/05/2025
+
 ©️ **Copyright:** 2025 Denilly Carvalho do Carmo.
+
 **Licença:** GNU General Public License (GPL-3.0).
 
 ---
@@ -139,7 +142,7 @@ Sugestões, melhorias ou correções podem ser enviadas via **pull requests** ou
 
 ## Licença
 
-Este projeto está licenciado sob a **GNU General Public License v3.0** – veja o arquivo **[LICENSE](LICENSE)** para mais detalhes.
+Este projeto está licenciado sob a **GNU General Public License v3.0**.
 
 ---
 
