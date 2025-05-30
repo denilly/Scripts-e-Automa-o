@@ -1,48 +1,145 @@
-# -----------------------------------------------------------------------------
-# Nome do arquivo de script: script-backup-mysql.sh
-# Descrição: Script para realizar o backup/dump do banco de dados Mysql/Mariadb, 
-#            compactação e exclusão de backups antigos.
-# Autor: Denilly Carvalho do Carmo
-# Data de Criação: 15/05/2025
-# Copyright (c) 2025 Denilly Carvalho do Carmo. Todos os direitos reservados.
-# Licença: GNU General Public License (GPL)
-# Versão: 1.6
+---
 
-# NOTAS: Este script é fornecido "como está" e pode ser utilizado e modificado por terceiros,
-#        desde que os créditos ao autor sejam mantidos. Para uso em projetos, por favor, faça
-#        referência a este script e ao autor.
-#
-# IMPORTANTE: Execute este script com ou sem argumentos para realizar o backup/dump do banco
-#             de dados dentre outras funções. Caso não seja informado nenhum argumento, será 
-#             aberto um menu interativo.
-#             Utilize argumentos para execução do script diretamente via comando ou agendamento
-#             no Cron. Acesse a opção de ajuda "-h/--help" do script para maiores informações.
-#             Os logs gerados pelo script podem ser rotacionados pelo logrotate 
-#             (/etc/logrotate.d/script-backup-mysql).
-#
-# COMO USAR:
-# 1. Crie o arquivo do script com o seu editor linux preferido:
-#    $ nano /usr/local/sbin/script-backup-mysql.sh
-# 2. Cole o código deste arquivo no editor, ajustes os parâmetros comentados com "<--" (quando  
-#    necessário) e salve o arquivo.
-# 3. Dê permissão de execução ao script:
-#    $ chmod 700 script-backup-mysql.sh
-# 4. Execute o script com "-l/--log" e "-C/--check" para criar o arquivo de log e checar requisitos:
-#    $ sudo script-backup-mysql.sh -l -C
-# 5. Mantenha uma cópia do script em /backup/scripts
-# 6. Crie um arquivo de configuração do logrotate com o seu editor linux preferido
-#    $ nano /etc/logrotate.d/script-backup-mysql
-# 7. Cole o código exemplo abaixo (a partir de "/var..." até "}") retire o sinalizador de 
-#    comentário "#    " para rotacionar o log.
-#
-#    /var/log/script-backup-mysql.sh.log {
-#        su root adm
-#        daily
-#        rotate 10
-#        compress
-#        missingok
-#        notifempty
-#        delaycompress
-#        create 640 root adm
-#    }
-# -----------------------------------------------------------------------------
+# script-backup-mysql.sh
+
+![Version](https://img.shields.io/badge/version-1.6-blue.svg)
+![License](https://img.shields.io/badge/license-GPL--3.0-green.svg)
+![Status](https://img.shields.io/badge/status-active-brightgreen.svg)
+
+## Descrição
+
+Script para realizar o **backup/dump** de bancos de dados **MySQL/MariaDB**, com funcionalidades adicionais de **compactação** e **exclusão automática de backups antigos**.
+
+> ✅ **Funcionalidades:**
+>
+> * Backup completo de bancos de dados.
+> * Compactação opcional dos arquivos gerados.
+> * Exclusão automática de backups antigos conforme a política definida.
+> * Execução interativa ou automatizada via **cron**.
+> * Geração e rotação de logs via **logrotate**.
+
+---
+
+## Autor
+
+**Denilly Carvalho do Carmo**
+📅 **Data de criação:** 15/05/2025
+©️ **Copyright:** 2025 Denilly Carvalho do Carmo.
+**Licença:** GNU General Public License (GPL-3.0).
+
+---
+
+## Notas
+
+Este script é fornecido "**como está**" e pode ser utilizado e modificado por terceiros, desde que os **créditos ao autor sejam mantidos**. Para uso em projetos, por favor, faça referência a este script e ao autor.
+
+### Importante
+
+* O script pode ser executado com ou sem argumentos:
+
+  * Sem argumentos: será exibido um **menu interativo**.
+  * Com argumentos: execução direta para uso em linha de comando ou via **cron**.
+
+* Utilize a opção de ajuda `-h` ou `--help` para obter mais informações sobre as opções disponíveis.
+
+* Os logs gerados podem ser rotacionados com o **logrotate** via configuração específica.
+
+---
+
+## Como usar
+
+### 1. Criar o arquivo do script
+
+```bash
+sudo nano /usr/local/sbin/script-backup-mysql.sh
+```
+
+Cole o código deste repositório no editor. Ajuste os parâmetros indicados com `<--` conforme a necessidade e salve.
+
+---
+
+### 2. Conceder permissão de execução
+
+```bash
+sudo chmod 700 /usr/local/sbin/script-backup-mysql.sh
+```
+
+---
+
+### 3. Executar o script para gerar o log e checar requisitos
+
+```bash
+sudo /usr/local/sbin/script-backup-mysql.sh -l -C
+```
+
+---
+
+### 4. Recomendação
+
+Mantenha uma cópia de segurança do script em:
+
+```bash
+/backup/scripts
+```
+
+---
+
+### 5. Configurar logrotate
+
+Crie o arquivo de configuração do logrotate:
+
+```bash
+sudo nano /etc/logrotate.d/script-backup-mysql
+```
+
+Cole o seguinte conteúdo, **removendo** o sinalizador de comentário `#    ` para ativar a rotação:
+
+```logrotate
+/var/log/script-backup-mysql.sh.log {
+    su root adm
+    daily
+    rotate 10
+    compress
+    missingok
+    notifempty
+    delaycompress
+    create 640 root adm
+}
+```
+
+---
+
+## Exemplos de uso
+
+### Execução interativa:
+
+```bash
+sudo /usr/local/sbin/script-backup-mysql.sh
+```
+
+### Execução automática com parâmetros (exemplo):
+
+```bash
+sudo /usr/local/sbin/script-backup-mysql.sh -d /backup/mysql -c -r 7
+```
+
+> Onde:
+> `-d` define o diretório de backup.
+> `-c` ativa a compactação.
+> `-r` define a retenção de backups (em dias).
+
+---
+
+## Contribuição
+
+Contribuições são bem-vindas!
+Sugestões, melhorias ou correções podem ser enviadas via **pull requests** ou **issues** neste repositório.
+
+---
+
+## Licença
+
+Este projeto está licenciado sob a **GNU General Public License v3.0** – veja o arquivo **[LICENSE](LICENSE)** para mais detalhes.
+
+---
+
