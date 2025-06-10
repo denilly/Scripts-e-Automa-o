@@ -1788,7 +1788,6 @@ parse_args() {
     fi
   fi
 
-
   # Atribuindo arg_tipo conforme passagem de argumentos
   if [[ "$usou_tabela" -eq 1 ]]; then
     arg_tipo="3"  # 3 = dump de tabela
