@@ -1737,7 +1737,7 @@ parse_args() {
   # Validação -o
   if [[ "$usou_output" -eq 1 && "$modo_argumentos" -eq 0 ]]; then
     printf "%s\n" # Pula 1 linha
-    log_error "A opção -o/--output requer -a/--all, -d/--database ou -r/--remove."
+    log_error "A opção -o/--output requer outros argumentos. (Use -h para ajuda.)"
     printf "\n%s\n" "Abortando."
     exit 1
   fi
