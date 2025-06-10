@@ -1496,7 +1496,7 @@ mostrar_ajuda() { # Menu ajuda
   echo "                            Requer também -d <database>"
   echo
   echo "  -o, --output <diretório>  Diretório de destino do backup"
-  echo "                            Opcional com '-a/--all' e '-d/--database'."
+  echo "                            Opcional com '-a/--all', '-d/--database' e '-t/--table'."
   echo "                            Obrigatório com '-r/--remove' e '-v/--verify'."
   echo
   echo "  -c, --compress            Compactar backup em formato .tar.bz2"
@@ -1505,8 +1505,8 @@ mostrar_ajuda() { # Menu ajuda
   echo
   echo "  -v, --verify              Verifica a integridade de um backup"
   echo "                            Quando usado isoladamente (sem '-a' ou '-d'),"
-  echo "                            exige '-o <diretório ou arquivo .tar.bz2>' para localizar"
-  echo "                            o backup a ser verificado."
+  echo "                            exige '-o/--output <diretório ou arquivo .tar.bz2>' "
+  echo "                            para localizar o backup a ser verificado."
   echo "                            Se combinado com '-a' ou '-d', a verificação"
   echo "                            será feita automaticamente após o backup."
   echo
