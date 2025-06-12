@@ -7,7 +7,7 @@
 # Data de Criação: 15/05/2025
 # Copyright (c) 2025 Denilly Carvalho do Carmo. Todos os direitos reservados.
 # Licença: GNU General Public License (GPL)
-# Versão: 1.1
+# Versão: 1.2
 
 # NOTAS: Este script é fornecido "como está" e pode ser utilizado e modificado por terceiros,
 #        desde que os créditos ao autor sejam mantidos. Para uso em projetos, por favor, faça
@@ -50,8 +50,8 @@
 
 #  1. =============================== CONFIGURAÇÕES ===============================
 # Controle de versão
-REVISAO_SCRIPT="10/06/2025"
-VERSAO_SCRIPT="1.1"
+REVISAO_SCRIPT="12/06/2025"
+VERSAO_SCRIPT="1.2"
 
 # Parâmetros
 SGBD_USERNAME="login_usuario"    # <-- Informe o usuário com acesso aos Banco de Dados
@@ -99,10 +99,16 @@ titulo() {    # Título ou cabeçalho
   local msg="$1"
   local raw="${2:-$(echo -e "$msg" | sed 's/\x1B\[[0-9;]*m//g')}"  # Remove ANSI se não passar raw
   
-  # Terminal (com cor)
-  printf "%b" "$msg" >&3
+  # Terminal (com cor), apenas se fd3 estiver aberto
+  if is_fd3_open; then
+    printf "%b" "$msg" >&3
+  else
+    printf "%b" "$msg"  # Fallback para stdout
+  fi
+
   # Log (sem cor)
   [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s" "$raw" >> "$LOGFILE"
+
   # Pula 1 linha
   printf "%s\n"
 }
@@ -117,8 +123,13 @@ rodape() {    # Rodapé de nível
     raw="$(printf '%*s' "$raw" '')"
   fi
 
-  # Terminal (com cor)
-  printf "%s\n" "$msg" >&3  #Fundo Azul
+  # Terminal (com cor), apenas se fd3 estiver aberto
+  if is_fd3_open; then
+    printf "%s\n" "$msg" >&3
+  else
+    printf "%s\n" "$msg"  # Fallback para stdout
+  fi
+
   # Log (sem cor)
   #printf "%s\n" "$raw" >> "$LOGFILE"
   # Pula 1 linha
@@ -128,9 +139,14 @@ rodape() {    # Rodapé de nível
 texto() {    # Texto formatado em ANSI
   local msg="$1"
   local raw="${2:-$(echo -e "$msg" | sed 's/\x1B\[[0-9;]*m//g')}"  # Remove ANSI se não passar raw
-  
-  # Terminal (com cor)
-  printf "%b" "$msg" >&3
+
+  # Terminal (com cor), apenas se fd3 estiver aberto
+  if is_fd3_open; then
+    printf "%b" "$msg" >&3
+  else
+    printf "%b" "$msg"  # Fallback para stdout
+  fi
+
   # Log (sem cor)
   [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] &&  printf "%s" "$raw" >> "$LOGFILE"
   # Pula 1 linha
@@ -147,7 +163,13 @@ tabela() {    # Formata cabeçalho de tabela em ANSI
   local raw_cabecalho
   raw_cabecalho="$(echo -e "$cabecalho" | sed 's/\x1B\[[0-9;]*m//g')"
 
-  printf "%b\n" "$cabecalho" >&3
+  # Terminal (com cor), apenas se fd3 estiver aberto
+  if is_fd3_open; then
+    printf "%b\n" "$cabecalho" >&3
+  else
+    printf "%b\n" "$cabecalho"  # Fallback para stdout
+  fi
+
   [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$raw_cabecalho" >> "$LOGFILE"
 }
 
@@ -158,8 +180,13 @@ log_info() {
   local msg="$1"
   local raw="${2:-$(echo -e "$msg" | sed 's/\x1B\[[0-9;]*m//g')}"  # Remove ANSI se não passar raw
 
-  # Terminal (com cor)
-  printf "%b" "$COR_TEXTO4[INFO]$COR_RESET [$timestamp] $msg" >&3  # Ciano
+  # Terminal (com cor), apenas se fd3 estiver aberto
+  if is_fd3_open; then
+    printf "%b" "$COR_TEXTO4[INFO]$COR_RESET [$timestamp] $msg" >&3  # Ciano
+  else
+    printf "%b" "$COR_TEXTO4[INFO]$COR_RESET [$timestamp] $msg"  # Fallback para stdout
+  fi
+
   # Log (sem cor)
   [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s" "[INFO] [$timestamp] $raw" >> "$LOGFILE"
   # Pula 1 linha
@@ -171,9 +198,14 @@ log_success() {
   timestamp=$(date "+%d/%b/%Y:%H:%M:%S %z")
   local msg="$1"
   local raw="${2:-$(echo -e "$msg" | sed 's/\x1B\[[0-9;]*m//g')}"  # Remove ANSI se não passar raw
-  
-  # Terminal (com cor)
-  printf "%b" "$COR_TEXTO5[OK]$COR_RESET [$timestamp] $msg" >&3  # Ciano
+
+  # Terminal (com cor), apenas se fd3 estiver aberto
+  if is_fd3_open; then
+    printf "%b" "$COR_TEXTO5[OK]$COR_RESET [$timestamp] $msg" >&3  # Ciano
+  else
+    printf "%b" "$COR_TEXTO5[OK]$COR_RESET [$timestamp] $msg"  # Fallback para stdout
+  fi
+
   # Log (sem cor)
   [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s" "[OK] [$timestamp] $raw" >> "$LOGFILE"
   # Pula 1 linha
@@ -185,9 +217,14 @@ log_warn() {
   timestamp=$(date "+%d/%b/%Y:%H:%M:%S %z")
   local msg="$1"
   local raw="${2:-$(echo -e "$msg" | sed 's/\x1B\[[0-9;]*m//g')}"  # Remove ANSI se não passar raw
-  
-  # Terminal (com cor)
-  printf "%b" "$COR_TEXTO2[AVISO]$COR_RESET [$timestamp] $msg" >&3  # Ciano
+
+  # Terminal (com cor), apenas se fd3 estiver aberto
+  if is_fd3_open; then
+    printf "%b" "$COR_TEXTO2[AVISO]$COR_RESET [$timestamp] $msg" >&3  # Ciano
+  else
+    printf "%b" "$COR_TEXTO2[AVISO]$COR_RESET [$timestamp] $msg"  # Fallback para stdout
+  fi
+
   # Log (sem cor)
   [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s" "[AVISO] [$timestamp] $raw" >> "$LOGFILE"
   # Pula 1 linha
@@ -200,8 +237,13 @@ log_error() {
   local msg="$1"
   local raw="${2:-$(echo -e "$msg" | sed 's/\x1B\[[0-9;]*m//g')}"  # Remove ANSI se não passar raw
 
-  # Terminal (com cor)
-  printf "%b" "$COR_TEXTO1[ERRO]$COR_RESET [$timestamp] $msg" >&3  # Ciano
+  # Terminal (com cor), apenas se fd3 estiver aberto
+  if is_fd3_open; then
+    printf "%b" "$COR_TEXTO1[ERRO]$COR_RESET [$timestamp] $msg" >&3  # Ciano
+  else
+    printf "%b" "$COR_TEXTO1[ERRO]$COR_RESET [$timestamp] $msg"  # Fallback para stdout
+  fi
+
   # Log (sem cor)
   [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s" "[ERRO] [$timestamp] $raw" >> "$LOGFILE"
   # Pula 1 linha
@@ -216,20 +258,17 @@ validar_diretorio() {
   if [ -d "$dir" ]; then
     if [ ! -w "$dir" ]; then
       log_error "Sem permissão de gravação no diretório: $COR_DESTAQUE2$dir$COR_RESET"
-      printf "\n%s\n" "Abortando."
       return 1
     fi
     return 0
   elif [[ -f "$dir" && "$dir" =~ \.tar\.bz2$ ]]; then
     if [ ! -r "$dir" ]; then
       log_error "Sem permissão de leitura no arquivo: $COR_DESTAQUE2$dir$COR_RESET"
-      printf "\n%s\n" "Abortando."
       return 1
     fi
     return 0
   else
     log_error "O caminho completo informado não existe: $COR_DESTAQUE2$dir$COR_RESET"
-    printf "\n%s\n" "Abortando."
     return 1
   fi
 }
@@ -240,7 +279,6 @@ testar_conexao_mysql() {
 
   if ! executar_mysql "$SGBD_USERNAME" "$SGBD_USER_PWD" --connect-timeout=$SGBD_CONN_TIMEOUT -e "SELECT 1;" &>/dev/null; then
     log_error "Falha na conexão com o MySQL em $COR_DESTAQUE2$SGBD_HOST:$SGBD_PORT$COR_RESET usando o usuário '$SGBD_USERNAME'."
-    printf "\n%s\n" "Abortando."
     return 1
   fi
 
@@ -442,8 +480,14 @@ excluir_backups_antigos() {
 
   titulo "=> ${COR_SUBLINHADO}Executando opção de exclusão de backups${COR_RESET}"
 
+  # Validação do diretório
   if ! validar_diretorio "$destino"; then
-    return 1
+    printf "\n%s\n" "Abortando."
+    if [ "$modo_argumentos" -eq 1 ]; then
+      exit 1  # Sai no modo não interativo
+    else
+      return 1  # Retorna ao menu no modo interativo
+    fi
   fi
 
   dias=${dias:-$DEFAULT_RETENTION_DAYS}
@@ -519,13 +563,24 @@ executar_backup() {
 
   # Validação do diretório
   if ! validar_diretorio "$destino"; then
-    return 1
+    printf "\n%s\n" "Abortando."
+    if [ "$modo_argumentos" -eq 1 ]; then
+      exit 1  # Sai no modo não interativo
+    else
+      return 1  # Retorna ao menu no modo interativo
+    fi
   fi
+
   log_success "Diretório de destino definido: $COR_DESTAQUE1$destino$COR_RESET"
 
-  # Teste de conexão Mysql
+  # Teste de conexão MySQL
   if ! testar_conexao_mysql; then
-    return 1
+    printf "\n%s\n" "Abortando."
+    if [ "$modo_argumentos" -eq 1 ]; then
+      exit 1  # Sai no modo não interativo
+    else
+      return 1  # Retorna ao menu no modo interativo
+    fi
   fi
 
   mkdir -p "$destino/$data_atual"
@@ -610,13 +665,26 @@ executar_backup_tabela() {
 
   titulo "=> ${COR_SUBLINHADO}Executando opção de backup de tabela${COR_RESET}"
 
+  # Validação do diretório
   if ! validar_diretorio "$destino"; then
-    return 1
+    printf "\n%s\n" "Abortando."
+    if [ "$modo_argumentos" -eq 1 ]; then
+      exit 1  # Sai no modo não interativo
+    else
+      return 1  # Retorna ao menu no modo interativo
+    fi
   fi
+
   log_success "Diretório de destino definido: $COR_DESTAQUE1$destino$COR_RESET"
 
+  # Teste de conexão MySQL
   if ! testar_conexao_mysql; then
-    return 1
+    printf "\n%s\n" "Abortando."
+    if [ "$modo_argumentos" -eq 1 ]; then
+      exit 1  # Sai no modo não interativo
+    else
+      return 1  # Retorna ao menu no modo interativo
+    fi
   fi
 
   if ! executar_mysql "$SGBD_USERNAME" "$SGBD_USER_PWD" -e "USE \`$banco\`;" 2>/dev/null; then
@@ -682,7 +750,12 @@ verificar_integridade_backup() {
 
   # Validação do diretório
   if ! validar_diretorio "$destino"; then
-    return 1
+    printf "\n%s\n" "Abortando."
+    if [ "$modo_argumentos" -eq 1 ]; then
+      exit 1  # Sai no modo não interativo
+    else
+      return 1  # Retorna ao menu no modo interativo
+    fi
   fi
 
   # Se for diretório, verifica se contém arquivos .sql ou .tar.bz2
@@ -696,9 +769,14 @@ verificar_integridade_backup() {
     fi
   fi
 
-  # Teste de conexão Mysql
+  # Teste de conexão MySQL
   if ! testar_conexao_mysql; then
-    return 1
+    printf "\n%s\n" "Abortando."
+    if [ "$modo_argumentos" -eq 1 ]; then
+      exit 1  # Sai no modo não interativo
+    else
+      return 1  # Retorna ao menu no modo interativo
+    fi
   fi
 
   log_info "Verificando integridade do backup..."
@@ -744,7 +822,7 @@ verificar_integridade_backup() {
       return 1
       fi
 
-	  temp_dir="$(mktemp -d)"
+      temp_dir="$(mktemp -d)"
       log_info "Descompactando em $temp_dir para verificação..."
 
       if ! tar -xjf "$tar_file" -C "$temp_dir"; then
@@ -982,12 +1060,13 @@ traduz_scope() {
       echo "TODOS OS BANCOS E TABELAS"
       ;;
     \`*\`.\*)
-      banco=$(echo "$raw_scope" | sed -E "s/^\\\`(.+)\\\`\.\*$/\1/")
+      banco=$(echo "$raw_scope" | sed 's/^`\(.*\)`.*/\1/')
       echo "TODAS AS TABELAS DO BANCO '$banco'"
       ;;
     \`*\`.\`*\`)
-      banco=$(echo "$raw_scope" | sed -E "s/^\\\`(.+)\\\`\.\\\`(.+)\\\`$/\1.\2/")
-      echo "TABELA $banco"
+      banco=$(echo "$raw_scope" | sed 's/^`\([^`]*\)`.`\([^`]*\)`$/\1/')
+      tabela=$(echo "$raw_scope" | sed 's/^`\([^`]*\)`.`\([^`]*\)`$/\2/')
+      echo "TODA A TABELA '$tabela' DO BANCO '$banco'"
       ;;
     *)
       echo "$raw_scope"
@@ -1023,7 +1102,7 @@ listar_usuarios_priv_db_info() {
 
       [ -z "$PRIVS" ] && PRIVS="N/A"
       [ -z "$SCOPE" ] && SCOPE="N/A"
-	
+
       SCOPE_TRADUZIDO=$(traduz_scope "$SCOPE")
       SCOPE_FINAL="$SCOPE_TRADUZIDO ($SCOPE)"
 
@@ -1133,6 +1212,21 @@ check_mysql_info() {
 # =================================================================================
 
 #  3. ========================= CONTROLE DE LOG E STDOUT ==========================
+# Função para verificar se o descritor 3 está aberto
+is_fd3_open() {
+  if { true >&3; } 2>/dev/null; then
+    return 0  # Descritor 3 está aberto
+  else
+    return 1  # Descritor 3 está fechado ou inválido
+  fi
+}
+
+# Define uma "armadilha" (trap) para limpeza
+cleanup() {
+  exec 3>&-  # Fecha o descritor 3
+  remover_mycnf  # Remove arquivo .my.cnf temporário
+}
+
 # Garante que o diretório existe
 mkdir -p "$LOGDIR"
 
@@ -1140,50 +1234,54 @@ mkdir -p "$LOGDIR"
 LOG_DEBUG=$(echo "$LOG_DEBUG" | tr '[:upper:]' '[:lower:]')
 
 # Guarda a saída original do terminal em um descritor alternativo (fd 3)
-if [ -t 1 ]; then
-  exec 3>&1   # Terminal real
-else
-  exec 3>/dev/null  # Silencia se não for terminal (Crontab)
-fi
+exec 3>&1  # Sempre preservamos o stdout original no fd3
 
-# Define uma "armadilha" (trap) para que quando o script terminar (EXIT), o descritor 3 seja fechado
-trap 'exec 3>&-' EXIT INT TERM ERR
+# Define uma "armadilha" (trap) para garantir que o descritor 3 seja fechado
+trap cleanup EXIT INT TERM ERR
 
 # Redireciona stdout/stderr para o log com tee (importante para registrar qualquer saída incluindo echo e printf)
-[[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && exec > >(tee -a "$LOGFILE") 2>&1
+if [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]]; then
+  if [ -t 1 ]; then
+    exec > >(tee -a "$LOGFILE") 2>&1
+  else
+    exec >> "$LOGFILE" 2>&1  # Em ambientes não interativos, apenas redireciona para o log
+  fi
+fi
 # =================================================================================
 
 #  4. ============================== MODO INTERATIVO ==============================
 # As funções a seguir sao utilizadas para construção do menu interativo e chamamento das funções principais
 exibir_menu() {
+  if is_fd3_open && [ -t 3 ]; then # Limpa a tela se descritor 3 estiver ativo
     clear >&3
-    sleep 0.2
-    printf "%s\n"
-    titulo "${COR_DESTAQUE3}                         ========== MENU DE BACKUP MYSQL/MARIADB ==========                         ${COR_RESET}"
-    echo "Data da última revisão: $REVISAO_SCRIPT"
-    echo "Versão: $VERSAO_SCRIPT"
-    echo
-    echo "Escolha uma opção:"
-    texto "  [ ${COR_TEXTO2} 1${COR_RESET} ] Backup de todos os Banco de Dados"
-    texto "  [ ${COR_TEXTO2} 2${COR_RESET} ] Backup de um Banco de Dados específico"
-    texto "  [ ${COR_TEXTO2} 3${COR_RESET} ] Backup de uma Tabela de um Banco de Dados"
-    texto "  [ ${COR_TEXTO2} 4${COR_RESET} ] Verificar integridade de um backup"
-    texto "  [ ${COR_TEXTO2} 5${COR_RESET} ] Excluir backups antigos"
-    texto "  [ ${COR_TEXTO2} 6${COR_RESET} ] Checar pré-requisitos deste script"
-    texto "  [ ${COR_TEXTO2} 7${COR_RESET} ] Informações sobre o SGBD do servidor"
-    if [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]]; then
-      texto "  [ ${COR_TEXTO2} 8${COR_RESET} ] Desativar log (debug)"
-    else
-      texto "  [ ${COR_TEXTO2} 8${COR_RESET} ] Ativar log (debug)"
-    fi
-    texto "  [ ${COR_TEXTO2} 9${COR_RESET} ] Ver ajuda"
-    texto "  [ ${COR_TEXTO2}10${COR_RESET} ] ${COR_TEXTO1}Sair${COR_RESET}"
-    echo
-    rodape $RODAPE_SIZE $COR_DESTAQUE3
+  fi
+  sleep 0.2
+  printf "%s\n"
+  titulo "${COR_DESTAQUE3}                         ========== MENU DE BACKUP MYSQL/MARIADB ==========                         ${COR_RESET}"
+  echo "Data da última revisão: $REVISAO_SCRIPT"
+  echo "Versão: $VERSAO_SCRIPT"
+  echo
+  echo "Escolha uma opção:"
+  texto "  [ ${COR_TEXTO2} 1${COR_RESET} ] Backup de todos os Banco de Dados"
+  texto "  [ ${COR_TEXTO2} 2${COR_RESET} ] Backup de um Banco de Dados específico"
+  texto "  [ ${COR_TEXTO2} 3${COR_RESET} ] Backup de uma Tabela de um Banco de Dados"
+  texto "  [ ${COR_TEXTO2} 4${COR_RESET} ] Verificar integridade de um backup"
+  texto "  [ ${COR_TEXTO2} 5${COR_RESET} ] Excluir backups antigos"
+  texto "  [ ${COR_TEXTO2} 6${COR_RESET} ] Checar pré-requisitos deste script"
+  texto "  [ ${COR_TEXTO2} 7${COR_RESET} ] Informações sobre o SGBD do servidor"
+  if [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]]; then
+    texto "  [ ${COR_TEXTO2} 8${COR_RESET} ] Desativar log (debug)"
+  else
+    texto "  [ ${COR_TEXTO2} 8${COR_RESET} ] Ativar log (debug)"
+  fi
+  texto "  [ ${COR_TEXTO2} 9${COR_RESET} ] Ver ajuda"
+  texto "  [ ${COR_TEXTO2}10${COR_RESET} ] ${COR_TEXTO1}Sair${COR_RESET}"
+  echo
+  rodape $RODAPE_SIZE $COR_DESTAQUE3
     
-    read -rp "  Digite sua escolha [1-10]: " opcao
-    [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$opcao" >> "$LOGFILE"
-    printf "%s\n"
+  read -rp "  Digite sua escolha [1-10]: " opcao
+  [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$opcao" >> "$LOGFILE"
+  printf "%s\n"
 }
 
 opcao_menu_backup() {
@@ -1425,7 +1523,9 @@ opcao_menu_mysql_info() {
 }
 
 opcao_menu_ajuda() {
-  clear >&3
+  if is_fd3_open && [ -t 3 ]; then # Limpa a tela se descritor 3 estiver ativo
+    clear >&3
+  fi
   sleep 0.2
   titulo "${COR_DESTAQUE1}                                ========== MENU DE AJUDA ==========                                 ${COR_RESET}"
   mostrar_ajuda
