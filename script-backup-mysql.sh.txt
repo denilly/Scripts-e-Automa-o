@@ -6,9 +6,9 @@
 # Autor: Denilly Carvalho do Carmo
 # Data de Criação: 15/05/2025
 # Copyright (c) 2025 Denilly Carvalho do Carmo. Todos os direitos reservados.
-# Licença: GNU General Public License (GPL)
+# Licença: GNU General Public License (GPL) versão 3
 # Versão: 1.2
-
+#
 # NOTAS: Este script é fornecido "como está" e pode ser utilizado e modificado por terceiros,
 #        desde que os créditos ao autor sejam mantidos. Para uso em projetos, por favor, faça
 #        referência a este script e ao autor.
