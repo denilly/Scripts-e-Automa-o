@@ -4,7 +4,7 @@
 
 ![Version](https://img.shields.io/badge/version-1.0-blue.svg)
 ![License](https://img.shields.io/badge/license-GPL--3.0-green.svg)
-![Status](https://img.shields.io/badge/status-active-brightgreen.svg)
+![Status](https://img.shields.io/badge/status-inactive-red.svg)
 
 ## Descrição
 
