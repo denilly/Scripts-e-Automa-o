@@ -148,3 +148,10 @@ Este projeto está licenciado sob a **GNU General Public License v3.0**.
 
 ---
 
+## Versão para Windows disponível
+Este projeto possui uma versão totalmente adaptada para Windows, desenvolvida em PowerShell, com as mesmas funcionalidades da versão shell script para Linux.
+
+🔗 Acesse aqui:
+[script-backup-mysql-windows (PowerShell)](https://github.com/denilly/Script-backup-mysql-win)
+
+---
