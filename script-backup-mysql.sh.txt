@@ -2,12 +2,14 @@
 # -----------------------------------------------------------------------------
 # Nome do arquivo de script: script-backup-mysql.sh
 # Descrição: Script para realizar o backup/dump do banco de dados Mysql/Mariadb, 
-#            compactação e exclusão de backups antigos.
+#            compactação e exclusão de backups antigos, dentre outras funcionalidades, 
+#            em ambiente Linux.
 # Autor: Denilly Carvalho do Carmo
 # Data de Criação: 15/05/2025
+# Projeto: https://github.com/denilly/Script-backup-mysql
 # Copyright (c) 2025 Denilly Carvalho do Carmo. Todos os direitos reservados.
 # Licença: GNU General Public License (GPL) versão 3
-# Versão: 1.2
+# Versão: 1.3
 #
 # NOTAS: Este script é fornecido "como está" e pode ser utilizado e modificado por terceiros,
 #        desde que os créditos ao autor sejam mantidos. Para uso em projetos, por favor, faça
@@ -50,8 +52,9 @@
 
 #  1. =============================== CONFIGURAÇÕES ===============================
 # Controle de versão
-REVISAO_SCRIPT="12/06/2025"
-VERSAO_SCRIPT="1.2"
+REVISAO_SCRIPT="18/07/2025"
+VERSAO_SCRIPT="1.3"
+LICENCA_GPL="GPL-3.0"
 
 # Parâmetros
 SGBD_USERNAME="login_usuario"    # <-- Informe o usuário com acesso aos Banco de Dados
@@ -89,6 +92,7 @@ COR_SUBLINHADO="\033[4;1m"       # Sublinhado
 COR_DESTAQUE1="\033[100;1m"      # Fundo cinza
 COR_DESTAQUE2="\033[101;1m"      # Fundo vermelho
 COR_DESTAQUE3="\033[104;1m"      # Fundo azul
+COR_NEGRITO="\033[1m"            # Negrito
 COR_RESET="\033[m"               # Reseta a formatacao
 RODAPE_SIZE="100"                # Comprimento do rodapé
 # =================================================================================
@@ -261,7 +265,7 @@ validar_diretorio() {
       return 1
     fi
     return 0
-  elif [[ -f "$dir" && "$dir" =~ \.tar\.bz2$ ]]; then
+  elif [[ -f "$dir" && "$dir" =~ \.tar\.zst$ ]]; then
     if [ ! -r "$dir" ]; then
       log_error "Sem permissão de leitura no arquivo: $COR_DESTAQUE2$dir$COR_RESET"
       return 1
@@ -286,9 +290,9 @@ testar_conexao_mysql() {
   return 0
 }
 
-# Testa se tar e bzip2 estão instalados
+# Testa se tar e zstd estão instalados
 testar_depend_compactacao() {
-  local dependencias=("tar" "bzip2")
+  local dependencias=("tar" "zstd")
   local faltando=0
 
   for cmd in "${dependencias[@]}"; do
@@ -362,7 +366,7 @@ processar_dump() {
   local db_name
   local table_name=""
 
-  # Se tiver separador "_", assumimos que é dump de tabela no formato banco_tabela.sql
+  # Se tiver separador ".", assumimos que é dump de tabela no formato banco.tabela.sql
   if [[ "$dump_base" == *"."* ]]; then
     db_name="${dump_base%%.*}"
     table_name="${dump_base#*.}"
@@ -371,46 +375,56 @@ processar_dump() {
   fi
 
   if ! executar_mysql "$SGBD_USERNAME" "$SGBD_USER_PWD" -e "USE \`$db_name\`;" 2>/dev/null; then
-    log_error "Banco de dados '${COR_DESTAQUE1}$db_name${COR_RESET}' não existe no servidor. Não foi possível validar as tabelas."
+    log_error "Banco de dados '${COR_DESTAQUE1}$db_name${COR_RESET}' não existe no servidor."
     return
   fi
 
   if [[ -n "$table_name" ]]; then
-    # Verificação de dump de tabela específica
-    log_info "Verificando se a tabela '${COR_DESTAQUE1}$table_name${COR_RESET}' existe no banco '${COR_DESTAQUE1}$db_name${COR_RESET}'..."
+    log_info "Verificando se a tabela '$table_name' existe no banco '$db_name'..."
 
-    if executar_mysql "$SGBD_USERNAME" "$SGBD_USER_PWD" -e "SHOW TABLES FROM \`$db_name\` LIKE '$table_name';" -s --skip-column-names | grep -q "$table_name"; then
-      log_success "Tabela '${COR_DESTAQUE1}$table_name${COR_RESET}' existe no banco de dados."
+    table_type=$(executar_mysql "$SGBD_USERNAME" "$SGBD_USER_PWD" -e "SHOW FULL TABLES IN \`$db_name\` WHERE \`Tables_in_$db_name\` = '$table_name';" | awk 'NR==2 {print $2}')
+    
+    if [[ -n "$table_type" ]]; then
+        if [[ "$table_type" == "VIEW" ]]; then
+            log_info "A tabela '$table_name' é uma VIEW no banco de dados."
+        else
+            table_type="TABELA"
+            log_success "Tabela '$table_name' existe no banco de dados."
+        fi
     else
-      log_error "Tabela '${COR_DESTAQUE1}$table_name${COR_RESET}' não encontrada no banco de dados."
-      return
+        log_error "Tabela '$table_name' não encontrada no banco de dados."
+        return 1
     fi
 
-    # Verifica se há CREATE TABLE no dump
-    local create_table_count
-    create_table_count=$(grep -c '^CREATE TABLE' "$dump_file")
+    create_count=$(grep -E "^\s*(CREATE TABLE|/\*!.*CREATE VIEW)" "$dump_file" | grep -w "$table_name" | wc -l)
 
-    if [[ "$create_table_count" -ge 1 ]]; then
-      log_success "Dump contém definição de tabela (${create_table_count} CREATE TABLE encontrado)."
+    if [[ "$create_count" -ge 1 ]]; then
+        log_success "Dump contém definição de $table_type ($create_count encontrado)."
     else
-      log_warn "Dump ${COR_SUBLINHADO}não${COR_RESET} contém definição de tabela para '$table_name'."
+        log_warn "Dump não contém definição de $table_type para '$table_name'."
     fi
 
   else
-    # Verificação de dump de banco de dados completo
-    local tabelas_reais
-    tabelas_reais=$(executar_mysql "$SGBD_USERNAME" "$SGBD_USER_PWD" -e "SHOW TABLES FROM \`$db_name\`;" -s --skip-column-names | wc -l)
+    log_info "Verificando dump: $dump_file"
 
-    local tabelas_dump
-    tabelas_dump=$(grep -c '^CREATE TABLE' "$dump_file")
+    real_info=$(executar_mysql "$SGBD_USERNAME" "$SGBD_USER_PWD" -e "SHOW FULL TABLES IN \`$db_name\`;")
+    real_tables=$(echo "$real_info" | tail -n +2 | awk -F'\t' '$2 == "BASE TABLE"' | wc -l)
+    real_views=$(echo "$real_info" | tail -n +2 | awk -F'\t' '$2 == "VIEW"' | wc -l)
+    real_total=$((real_tables + real_views))
 
-    log_info "Tabelas no banco: $tabelas_reais"
-    log_info "Tabelas no dump: $tabelas_dump"
+    dump_tables=$(grep -c "^CREATE TABLE" "$dump_file")
+    dump_views=$(grep -c "^\s*/\*!.*CREATE VIEW" "$dump_file")
+    dump_total=$((dump_tables + dump_views))
 
-    if [[ "$tabelas_reais" -eq "$tabelas_dump" ]]; then
-      log_success "Todas as tabelas foram exportadas corretamente."
+    log_info "Banco de dados '$db_name' contém: $real_tables tabela(s) e $real_views view(s)"
+    log_info "Total de objetos do banco: $real_total"
+    log_info "Dump '$(basename "$dump_file")' contém definição(ões) de: $dump_tables tabela(s) e $dump_views view(s)"
+    log_info "Total de definição(ões) do dump: $dump_total"
+
+    if [[ "$real_total" -eq "$dump_total" ]]; then
+        log_success "Todas as tabelas e views foram exportadas corretamente."
     else
-      log_warn "Algumas tabelas ${COR_SUBLINHADO}não${COR_RESET} foram exportadas!"
+        log_warn "Algumas tabelas ou views NÃO foram exportadas!"
     fi
   fi
 }
@@ -493,19 +507,19 @@ excluir_backups_antigos() {
   dias=${dias:-$DEFAULT_RETENTION_DAYS}
   log_info "Verificando backups para excluir com mais de $COR_SUBLINHADO$dias$COR_RESET dias em: $COR_DESTAQUE1$destino$COR_RESET"
 
-  # Remover arquivos .tar.bz2 antigos
+  # Remover arquivos .tar.zst antigos
   ja_informou_arq=0
   while IFS= read -r arquivo; do
     if [[ -n "$arquivo" ]]; then
       if [[ "$ja_informou_arq" -eq 0 ]]; then
-        log_info "Arquivo(s) compactado(s) '.tar.bz2' detectado(s) para exclusão..."
+        log_info "Arquivo(s) compactado(s) '.tar.zst' detectado(s) para exclusão..."
         ja_informou_arq=1
       fi
       log_info "Excluindo: $COR_DESTAQUE1$arquivo$COR_RESET"
       rm -f "$arquivo"
       excluiu_algo=1
     fi
-  done < <(find "$destino" -maxdepth 1 -type f -name "????-??-??_??????.tar.bz2" -mtime +"$dias")
+  done < <(find "$destino" -maxdepth 1 -type f -name "????-??-??_??????.tar.zst" -mtime +"$dias")
 
   # Procurar diretórios no padrão de data/hora
   ja_informou_dir=0
@@ -620,11 +634,11 @@ executar_backup() {
   # Se o Dump teve sucesso, verifica se a compactação foi informada
   if [ "$sucesso" -eq 1 ]; then
     if [[ "$compactar" =~ ^(s|sim)$ ]]; then  # Realiza a compactação se especificada
-      if testar_depend_compactacao; then  # Testa dependências para compactação tar e bzip2
-        log_info "Compactando backup em tar.bz2..."
-        if tar -cjf "$destino/$data_atual.tar.bz2" -C "$destino" --remove-files "$data_atual"; then  # inicia a compactação
-          log_success "Backup concluído e armazenado em: $COR_DESTAQUE1$destino/$data_atual.tar.bz2$COR_RESET"
-          backup_final="$data_atual.tar.bz2"
+      if testar_depend_compactacao; then  # Testa dependências para compactação tar e zstd
+        log_info "Compactando backup em tar.zst..."
+        if tar -I 'zstd -T0 -19' -cf "$destino/$data_atual.tar.zst" -C "$destino" --remove-files "$data_atual"; then  # inicia a compactação
+          log_success "Backup concluído e armazenado em: $COR_DESTAQUE1$destino/$data_atual.tar.zst$COR_RESET"
+          backup_final="$data_atual.tar.zst"
         else
           log_error "Erro ao compactar o backup. O backup foi realizado, mas não foi compactado."
           log_warn "Backup armazenado em: $COR_DESTAQUE1$destino/$data_atual$COR_RESET"
@@ -715,10 +729,10 @@ executar_backup_tabela() {
 
   if [[ "$compactar" =~ ^(s|sim)$ ]]; then
     if testar_depend_compactacao; then
-      log_info "Compactando backup em tar.bz2..."
-      if tar -cjf "$destino/$data_atual.tar.bz2" -C "$destino" --remove-files "$data_atual"; then
-        log_success "Backup concluído e armazenado em: $COR_DESTAQUE1$destino/$data_atual.tar.bz2$COR_RESET"
-        backup_final="$data_atual.tar.bz2"
+      log_info "Compactando backup em tar.zst..."
+      if tar -I 'zstd -T0 -19' -cf "$destino/$data_atual.tar.zst" -C "$destino" --remove-files "$data_atual"; then
+        log_success "Backup concluído e armazenado em: $COR_DESTAQUE1$destino/$data_atual.tar.zst$COR_RESET"
+        backup_final="$data_atual.tar.zst"
       else
         log_error "Erro ao compactar o backup. O backup foi realizado, mas não foi compactado."
       fi
@@ -758,12 +772,12 @@ verificar_integridade_backup() {
     fi
   fi
 
-  # Se for diretório, verifica se contém arquivos .sql ou .tar.bz2
+  # Se for diretório, verifica se contém arquivos .sql ou .tar.zst
   if [[ -d "$backup_final" ]]; then
     local possui_backup
-    possui_backup=$(find "$backup_final" -maxdepth 2 \( -name "*.sql" -o -name "*.tar.bz2" \) | head -n 1)
+    possui_backup=$(find "$backup_final" -maxdepth 2 \( -name "*.sql" -o -name "*.tar.zst" \) | head -n 1)
     if [[ -z "$possui_backup" ]]; then
-      log_error "Diretório de backup não contém arquivos '.sql' ou '.tar.bz2': $backup_final"
+      log_error "Diretório de backup não contém arquivos '.sql' ou '.tar.zst': $backup_final"
       printf "\n%s\n" "Abortando."
       return 1
     fi
@@ -781,7 +795,7 @@ verificar_integridade_backup() {
 
   log_info "Verificando integridade do backup..."
 
-  if [[ -f "$backup_final" && "$backup_final" == *.tar.bz2 ]]; then
+  if [[ -f "$backup_final" && "$backup_final" == *.tar.zst ]]; then
     # backup_final é um arquivo compactado
     log_info "Backup compactado ${COR_SUBLINHADO}detectado${COR_RESET}."
 
@@ -793,7 +807,7 @@ verificar_integridade_backup() {
     temp_dir="$(mktemp -d)"
     log_info "Descompactando em $temp_dir para verificação..."
 
-    if ! tar -xjf "$backup_final" -C "$temp_dir"; then
+    if ! tar -I 'zstd -d' -xf $backup_final -C $temp_dir; then
       log_error "Falha ao descompactar $backup"
       rm -rf "$temp_dir"
       return 1
@@ -811,8 +825,8 @@ verificar_integridade_backup() {
     rm -rf "$temp_dir"
 
   elif [[ -d "$backup_final" ]]; then
-    # Primeiro, processar qualquer arquivo .tar.bz2 dentro do diretório
-    local arquivos_tar=($(find "$backup_final" -maxdepth 1 -type f -name "*.tar.bz2"))
+    # Primeiro, processar qualquer arquivo .tar.zst dentro do diretório
+    local arquivos_tar=($(find "$backup_final" -maxdepth 1 -type f -name "*.tar.zst"))
 
     for tar_file in "${arquivos_tar[@]}"; do
       log_info "Backup compactado ${COR_SUBLINHADO}detectado${COR_RESET}: $tar_file"
@@ -825,7 +839,7 @@ verificar_integridade_backup() {
       temp_dir="$(mktemp -d)"
       log_info "Descompactando em $temp_dir para verificação..."
 
-      if ! tar -xjf "$tar_file" -C "$temp_dir"; then
+      if ! tar -I 'zstd -d' -xf $tar_file -C $temp_dir; then
         log_error "Falha ao descompactar $tar_file"
         rm -rf "$temp_dir"
         continue
@@ -872,7 +886,7 @@ verificar_integridade_backup() {
 
 # Verifica pré-requisitos para execução do script
 verificar_pre_requisitos() {
-  local dependencias=("mysqldump" "mysqladmin" "mysql" "sha256sum" "tar" "bzip2")
+  local dependencias=("mysqldump" "mysqladmin" "mysql" "sha256sum" "tar" "zstd")
   local faltando=0
   local confirmar_resp="s|sim|n|nao"
 
@@ -1170,18 +1184,6 @@ check_mysql_info() {
   titulo "${COR_TEXTO2}  ${COR_SUBLINHADO}Versão do MySQL/MariaDB:${COR_RESET} $mysql_version"
   printf "%s\n"
 
-  # Lista as bases de dados existentes com seus tamanhos
-  listar_databases_info
-
-  # Verificar usuários e hosts
-  listar_usuarios_info
-
-  # Listagem geral dos privilégios dos usuários
-  listar_usuarios_priv_info
-
-  # Permissões dos usuários nos banco de dados
-  listar_usuarios_priv_db_info
-
   # Informações adicionais: 
   local mysqladmin_status
   mysqladmin_status=$(executar_mysqladmin "$admin_user" "$admin_pwd" status)
@@ -1208,6 +1210,18 @@ check_mysql_info() {
   conexoes_mysql=$(echo "$mysqladmin_status" | awk '{print $4}')
   titulo "${COR_TEXTO2}  ${COR_SUBLINHADO}Conexões ativas:${COR_RESET} $conexoes_mysql"
   printf "%s\n"
+
+  # Lista as bases de dados existentes com seus tamanhos
+  listar_databases_info
+
+  # Verificar usuários e hosts
+  listar_usuarios_info
+
+  # Listagem geral dos privilégios dos usuários
+  listar_usuarios_priv_info
+
+  # Permissões dos usuários nos banco de dados
+  listar_usuarios_priv_db_info
 }
 # =================================================================================
 
@@ -1307,7 +1321,7 @@ opcao_menu_backup() {
   printf "%s\n"
 
   while [[ ! "$confirmar" =~ ^($confirmar_resp)$ ]]; do
-    read -rp "Deseja compactar o backup em formato .tar.bz2? (s/sim ou n/nao) [$DEFAULT_COMPACTAR]: " confirmar
+    read -rp "Deseja compactar o backup em formato .tar.zst? (s/sim ou n/nao) [$DEFAULT_COMPACTAR]: " confirmar
     [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$confirmar" >> "$LOGFILE"
     confirmar="${confirmar:-$DEFAULT_COMPACTAR}"
     confirmar=$(echo "$confirmar" | tr '[:upper:]' '[:lower:]')
@@ -1378,7 +1392,7 @@ opcao_menu_backup_tabela() {
 
   # Compactação
   while [[ ! "$confirmar" =~ ^($confirmar_resp)$ ]]; do
-    read -rp "Deseja compactar o backup em formato .tar.bz2? (s/sim ou n/nao) [$DEFAULT_COMPACTAR]: " confirmar
+    read -rp "Deseja compactar o backup em formato .tar.zst? (s/sim ou n/nao) [$DEFAULT_COMPACTAR]: " confirmar
     [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$confirmar" >> "$LOGFILE"
     confirmar="${confirmar:-$DEFAULT_COMPACTAR}"
     confirmar=$(echo "$confirmar" | tr '[:upper:]' '[:lower:]')
@@ -1425,7 +1439,7 @@ opcao_menu_integridade() {
   printf "%s\n"
  
   while [[ -z "$backup" ]]; do
-    read -rp "Informe o nome do arquivo (tar.bz2) ou diretório com o(s) dump(s) '.sql': " backup
+    read -rp "Informe o nome do arquivo (tar.zst) ou diretório com o(s) dump(s) '.sql': " backup
     [[ "$LOG_DEBUG" =~ ^(s|sim)$ ]] && printf "%s\n" "$backup" >> "$LOGFILE"
     printf "%s\n"
     [[ -z "$backup" ]] && log_warn "O nome não pode ser vazio." && printf "%s\n"
@@ -1586,9 +1600,15 @@ arg_mysqlinfo=""
 # Funções do Parsing
 mostrar_ajuda() { # Menu ajuda
   echo
-  echo "Uso: $(basename "$0") [-a] [-d <database>] [-t <tabela>] [-o <diretório_destino>] [-c] [-l] [-r <dias>] [-v] [-h] [-C] [-i]"
+  texto "${COR_NEGRITO}Sobre:${COR_RESET} Script para realizar o backup/dump do banco de dados Mysql/Mariadb, compactação e exclusão de"
+  echo "       backups antigos, dentre outras funcionalidades, em ambiente Linux."
   echo
-  echo "Opção:"
+  texto "${COR_NEGRITO}Licença:${COR_RESET} $LICENCA_GPL"
+  echo
+  texto "${COR_NEGRITO}Uso:${COR_RESET} $(basename "$0") [-a] [-d <database>] [-t <tabela>] [-o <diretório_destino>] [-c] [-l] [-r <dias>] [-v] "
+  echo "                            [-h] [-C] [-i]"
+  echo
+  texto "${COR_NEGRITO}Opção:${COR_RESET}"
   echo "  <nenhuma>                 Entra no modo interativo"
   echo "  -a, --all                 Backup de todos os bancos de dados"
   echo "  -d, --database <nome>     Backup de um banco de dados específico"
@@ -1599,39 +1619,39 @@ mostrar_ajuda() { # Menu ajuda
   echo "                            Opcional com '-a/--all', '-d/--database' e '-t/--table'."
   echo "                            Obrigatório com '-r/--remove' e '-v/--verify'."
   echo
-  echo "  -c, --compress            Compactar backup em formato .tar.bz2"
+  echo "  -c, --compress            Compactar backup em formato .tar.zst"
   echo "  -r, --remove <dias>       Remove backups com mais de <dias> dias"
   echo "                            Requer '-o/--output' especificado."
   echo
   echo "  -v, --verify              Verifica a integridade de um backup"
   echo "                            Quando usado isoladamente (sem '-a' ou '-d'),"
-  echo "                            exige '-o/--output <diretório ou arquivo .tar.bz2>' "
+  echo "                            exige '-o/--output <diretório ou arquivo .tar.zst>' "
   echo "                            para localizar o backup a ser verificado."
   echo "                            Se combinado com '-a' ou '-d', a verificação"
   echo "                            será feita automaticamente após o backup."
   echo
   echo "  -i, --mysql-info          Exibe informações sobre o MySQL/MariaDB"
-  echo "                            Necessário autenticar com usuário administrator."
+  echo "                            Necessário autenticar com usuário administrador."
   echo
   echo "  -C, --check               Checar dependências deste script."
   echo "  -l, --log                 Habilita o log (debug)"
   echo "  -h, --help                Exibe esta ajuda"
   echo
-  echo "Exemplos práticos:"
+  texto "${COR_NEGRITO}Exemplos práticos:${COR_RESET}"
   echo "  -> Backup de todos os bancos, com compactação e verificação:"
   echo "     $(basename "$0") -a -c -v"
   echo "  -> Backup de um banco específico com log:"
-  echo "     $(basename "$0") -d mydatabase -o /backup/banco_dados -l"
+  echo "     $(basename "$0") -d mydatabase -o $DEFAULT_DESTINO -l"
   echo "  -> Backup de uma tabela:"
-  echo "     $(basename "$0") -d mydatabase -t mytable -o /backup/banco_dados"
+  echo "     $(basename "$0") -d mydatabase -t mytable -o $DEFAULT_DESTINO"
   echo "  -> Remover backups com mais de 30 dias:"
-  echo "     $(basename "$0") -r 30 -o /backup/banco_dados"
+  echo "     $(basename "$0") -r 30 -o $DEFAULT_DESTINO"
   echo "  -> Verificar integridade de backup em diretório:"
-  echo "     $(basename "$0") -v -o /backup/banco_dados/2025-05-24_095744"
+  echo "     $(basename "$0") -v -o $DEFAULT_DESTINO/2025-05-24_095744"
   echo "  -> Verificar integridade de backup compactado:"
-  echo "     $(basename "$0") -v -o /backup/banco_dados/2025-05-24_095744.tar.bz2"
+  echo "     $(basename "$0") -v -o $DEFAULT_DESTINO/2025-05-24_095744.tar.zst"
   echo
-  texto "[${COR_SUBLINHADO}Importante:${COR_RESET}] Os logs deste script, quando habilitados, são gravados em: $COR_DESTAQUE1$LOGFILE$COR_RESET."
+  texto "[${COR_SUBLINHADO}Importante:${COR_RESET}] Os logs são gravados por padrão em: $COR_DESTAQUE1$LOGFILE$COR_RESET."
 }
 
 parse_args() {
