@@ -52,23 +52,25 @@
 
 #  1. =============================== CONFIGURAÇÕES ===============================
 # Controle de versão
-REVISAO_SCRIPT="18/07/2025"
+REVISAO_SCRIPT="21/07/2025"
 VERSAO_SCRIPT="1.3"
 LICENCA_GPL="GPL-3.0"
 
-# Parâmetros
+# Credenciais e demais configurações do SGBD
 SGBD_USERNAME="login_usuario"    # <-- Informe o usuário com acesso aos Banco de Dados
 SGBD_USER_PWD="senha_usuario"    # <-- Senha do usuário (Se a conta não existir, será criada uma com esta senha)
 SGBD_HOST="127.0.0.1"     # <-- Informe o host do banco de dados (localhost ou IP)
 SGBD_PORT="3306"          # <-- Informe a porta do banco de dados (padrão: 3306)
-SGBD_CONN_TIMEOUT="5"    # Timeout em segundos para conexão com o Banco de Dados
-SGBD_PARAM="--single-transaction --quick --routines --events --triggers"    # Parâmetros padrão para o msqldump
+SGBD_CONN_TIMEOUT="5"    # <-- Timeout em segundos para conexão com o Banco de Dados
+SGBD_PARAM="--single-transaction --quick --routines --events --triggers"    # <-- Parâmetros padrão para o msqldump
 SGBD_MY_CNF_TEMP="/tmp/.my.cnf.tmp.$$"    # Arquivo temporário de configuração segura de login Mysql/Mariadb
 
+# Definições padrão
 DEFAULT_DESTINO="/backup/banco_dados"    # <-- Diretório padrão de destino do backup
-DEFAULT_COMPACTAR="nao"    # Compactação
-DEFAULT_VERIFICAR="sim"    # Verificação de integridade
-DEFAULT_RETENTION_DAYS="10"    # Dias de retenção do backup
+DEFAULT_COMPACTAR="nao"    # <-- Compactação
+DEFAULT_COMPACTAR_NIVEL="10"  # <-- Defina o nível de compactação (1 a 20). Quanto maior o volume do backup, recomenda-se utilizar níveis mais baixos para evitar sobrecarga na CPU e na memória. Valor padrão sugerido: 10
+DEFAULT_VERIFICAR="sim"    # <-- Verificação de integridade
+DEFAULT_RETENTION_DAYS="10"    # <-- Dias de retenção do backup
 
 # Log
 LOGDIR="/var/log"    # <-- Caminho para o log do sistema ou outro se preferir
@@ -636,7 +638,7 @@ executar_backup() {
     if [[ "$compactar" =~ ^(s|sim)$ ]]; then  # Realiza a compactação se especificada
       if testar_depend_compactacao; then  # Testa dependências para compactação tar e zstd
         log_info "Compactando backup em tar.zst..."
-        if tar -I 'zstd -T0 -19' -cf "$destino/$data_atual.tar.zst" -C "$destino" --remove-files "$data_atual"; then  # inicia a compactação
+        if tar -I 'zstd -T0 -$DEFAULT_COMPACTAR_NIVEL' -cf "$destino/$data_atual.tar.zst" -C "$destino" --remove-files "$data_atual"; then  # inicia a compactação
           log_success "Backup concluído e armazenado em: $COR_DESTAQUE1$destino/$data_atual.tar.zst$COR_RESET"
           backup_final="$data_atual.tar.zst"
         else
@@ -730,7 +732,7 @@ executar_backup_tabela() {
   if [[ "$compactar" =~ ^(s|sim)$ ]]; then
     if testar_depend_compactacao; then
       log_info "Compactando backup em tar.zst..."
-      if tar -I 'zstd -T0 -19' -cf "$destino/$data_atual.tar.zst" -C "$destino" --remove-files "$data_atual"; then
+      if tar -I 'zstd -T0 -$DEFAULT_COMPACTAR_NIVEL' -cf "$destino/$data_atual.tar.zst" -C "$destino" --remove-files "$data_atual"; then
         log_success "Backup concluído e armazenado em: $COR_DESTAQUE1$destino/$data_atual.tar.zst$COR_RESET"
         backup_final="$data_atual.tar.zst"
       else
